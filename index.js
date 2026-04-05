@@ -9,11 +9,17 @@ const UNIT   = 0.5;   // 1 grid unit = 0.5 meters
 
 // ── STATE ──────────────────────────────────────────────────
 const state = {
-  walls:     [],    // [{x1,y1,x2,y2}] grid coordinates
-  tool:      'wall', // wall | erase
-  wallStart:  null,  // {x,y} or null
-  hoverPt:    null,  // current snapped grid point
-  hoverWall:  -1,    // index of highlighted wall (erase mode)
+  walls:          [],    // [{id, x1, y1, x2, y2}]
+  openings:       [],    // [{id, wallId, left, width, height, fromFloor, type}]
+  nextWallId:     1,
+  nextId:         1,
+
+  tool:           'wall', // wall | erase | door | window
+  wallStart:      null,   // {x,y} or null
+  hoverPt:        null,
+  hoverWall:      -1,     // wall index (erase/placement hover)
+  hoverOpening:   null,   // opening id (erase hover)
+  openingPreview: null,   // {wallIdx, left, width, height, fromFloor, type}
 
   panX:       0,
   panY:       0,
@@ -43,13 +49,10 @@ function gridToScreen(gx, gy) {
   return { x: gx * g + state.panX, y: gy * g + state.panY };
 }
 
-// Enforce orthogonal endpoint (snap to H or V from start)
 function orthoEnd(start, cursor) {
   const dx = Math.abs(cursor.x - start.x);
   const dy = Math.abs(cursor.y - start.y);
-  return dx >= dy
-    ? { x: cursor.x, y: start.y }
-    : { x: start.x, y: cursor.y };
+  return dx >= dy ? { x: cursor.x, y: start.y } : { x: start.x, y: cursor.y };
 }
 
 function ptToSegDist(px, py, ax, ay, bx, by) {
@@ -60,15 +63,196 @@ function ptToSegDist(px, py, ax, ay, bx, by) {
   return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
 }
 
+// Returns wall index or -1
 function wallHit(mx, my) {
-  const threshold = 9;
   for (let i = 0; i < state.walls.length; i++) {
     const w  = state.walls[i];
     const p1 = gridToScreen(w.x1, w.y1);
     const p2 = gridToScreen(w.x2, w.y2);
-    if (ptToSegDist(mx, my, p1.x, p1.y, p2.x, p2.y) < threshold) return i;
+    if (ptToSegDist(mx, my, p1.x, p1.y, p2.x, p2.y) < 9) return i;
   }
   return -1;
+}
+
+// Returns opening id or null
+function openingHit(mx, my) {
+  for (const op of state.openings) {
+    const wIdx = state.walls.findIndex(w => w.id === op.wallId);
+    if (wIdx < 0) continue;
+    const w       = state.walls[wIdx];
+    const wallLen = Math.hypot(w.x2 - w.x1, w.y2 - w.y1);
+    if (wallLen === 0) continue;
+    const p1 = gridToScreen(w.x1, w.y1);
+    const p2 = gridToScreen(w.x2, w.y2);
+    const t1 = op.left / wallLen;
+    const t2 = (op.left + op.width) / wallLen;
+    const sx1 = p1.x + t1 * (p2.x - p1.x);
+    const sy1 = p1.y + t1 * (p2.y - p1.y);
+    const sx2 = p1.x + t2 * (p2.x - p1.x);
+    const sy2 = p1.y + t2 * (p2.y - p1.y);
+    if (ptToSegDist(mx, my, sx1, sy1, sx2, sy2) < 9) return op.id;
+  }
+  return null;
+}
+
+// ── OPENING HELPERS ────────────────────────────────────────
+function getOpeningSettings() {
+  if (state.tool === 'door') {
+    return {
+      width:     parseFloat(document.getElementById('door-width').value)  * 2,
+      height:    parseFloat(document.getElementById('door-height').value) * 2,
+      fromFloor: 0,
+      type:      'door',
+    };
+  }
+  return {
+    width:     parseFloat(document.getElementById('win-width').value) * 2,
+    height:    parseFloat(document.getElementById('win-height').value) * 2,
+    fromFloor: parseFloat(document.getElementById('win-floor').value)  * 2,
+    type:      'window',
+  };
+}
+
+// Returns snapped left-edge (grid units from wall start), or null if wall too short
+function snapOpeningLeft(wallIdx, mx, my) {
+  const w       = state.walls[wallIdx];
+  const p1      = gridToScreen(w.x1, w.y1);
+  const p2      = gridToScreen(w.x2, w.y2);
+  const wallLen = Math.hypot(w.x2 - w.x1, w.y2 - w.y1);
+  const dx = p2.x - p1.x, dy = p2.y - p1.y;
+  const lenSq   = dx * dx + dy * dy;
+  if (lenSq < 0.001) return null;
+
+  const s    = getOpeningSettings();
+  if (s.width > wallLen) return null;
+
+  const t           = Math.max(0, Math.min(1, ((mx - p1.x) * dx + (my - p1.y) * dy) / lenSq));
+  const center      = Math.round(t * wallLen);           // snap center to grid
+  const left        = center - Math.round(s.width / 2);
+  return Math.max(0, Math.min(wallLen - s.width, left));
+}
+
+// ── 2D DRAW ────────────────────────────────────────────────
+function drawWall(w, isHov) {
+  const p1      = gridToScreen(w.x1, w.y1);
+  const p2      = gridToScreen(w.x2, w.y2);
+  const wallLen = Math.hypot(w.x2 - w.x1, w.y2 - w.y1);
+  const g       = GRID * state.zoom;
+  const thick   = Math.max(3, g * 0.3);
+
+  const wallOpenings = state.openings
+    .filter(op => op.wallId === w.id)
+    .sort((a, b) => a.left - b.left);
+
+  // Solid segments
+  const segments = [];
+  let cursor = 0;
+  for (const op of wallOpenings) {
+    if (op.left > cursor) segments.push({ from: cursor, to: op.left });
+    cursor = op.left + op.width;
+  }
+  if (cursor < wallLen) segments.push({ from: cursor, to: wallLen });
+
+  ctx.lineCap     = 'round';
+  ctx.strokeStyle = isHov ? '#c04040' : '#4a3f35';
+  ctx.lineWidth   = isHov ? thick + 2 : thick;
+
+  for (const seg of segments) {
+    const t1 = seg.from / wallLen, t2 = seg.to / wallLen;
+    ctx.beginPath();
+    ctx.moveTo(p1.x + t1 * (p2.x - p1.x), p1.y + t1 * (p2.y - p1.y));
+    ctx.lineTo(p1.x + t2 * (p2.x - p1.x), p1.y + t2 * (p2.y - p1.y));
+    ctx.stroke();
+  }
+
+  // Opening symbols
+  for (const op of wallOpenings) {
+    const t1   = op.left / wallLen;
+    const t2   = (op.left + op.width) / wallLen;
+    const ox1  = p1.x + t1 * (p2.x - p1.x);
+    const oy1  = p1.y + t1 * (p2.y - p1.y);
+    const ox2  = p1.x + t2 * (p2.x - p1.x);
+    const oy2  = p1.y + t2 * (p2.y - p1.y);
+    const isHovOp = op.id === state.hoverOpening;
+
+    if (op.type === 'window') {
+      ctx.strokeStyle = isHovOp ? '#c04040' : 'rgba(80,150,210,0.85)';
+      ctx.lineWidth   = isHovOp ? 3 : 2;
+      ctx.lineCap     = 'butt';
+      ctx.beginPath();
+      ctx.moveTo(ox1, oy1);
+      ctx.lineTo(ox2, oy2);
+      ctx.stroke();
+    } else {
+      // Door: thin line + small arc for swing
+      ctx.strokeStyle = isHovOp ? '#c04040' : 'rgba(120,90,60,0.6)';
+      ctx.lineWidth   = isHovOp ? 2 : 1.5;
+      ctx.lineCap     = 'round';
+      ctx.beginPath();
+      ctx.moveTo(ox1, oy1);
+      ctx.lineTo(ox2, oy2);
+      ctx.stroke();
+
+      // Swing arc (quarter circle from ox1 corner)
+      if (!isHovOp) {
+        const swingR = Math.hypot(ox2 - ox1, oy2 - oy1);
+        const angle  = Math.atan2(oy2 - oy1, ox2 - ox1);
+        ctx.strokeStyle = 'rgba(120,90,60,0.3)';
+        ctx.lineWidth   = 1;
+        ctx.setLineDash([2, 2]);
+        ctx.beginPath();
+        ctx.arc(ox1, oy1, swingR, angle, angle - Math.PI / 2, true);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+
+    // Hover label for erase
+    if (isHovOp) {
+      ctx.fillStyle    = '#c04040';
+      ctx.font         = '10px system-ui';
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(op.type === 'door' ? 'Dörr' : 'Fönster', (ox1 + ox2) / 2, (oy1 + oy2) / 2 - 7);
+    }
+  }
+}
+
+function drawOpeningPreview() {
+  const prev = state.openingPreview;
+  if (!prev) return;
+
+  const w       = state.walls[prev.wallIdx];
+  const p1      = gridToScreen(w.x1, w.y1);
+  const p2      = gridToScreen(w.x2, w.y2);
+  const wallLen = Math.hypot(w.x2 - w.x1, w.y2 - w.y1);
+
+  const t1  = prev.left / wallLen;
+  const t2  = (prev.left + prev.width) / wallLen;
+  const ox1 = p1.x + t1 * (p2.x - p1.x);
+  const oy1 = p1.y + t1 * (p2.y - p1.y);
+  const ox2 = p1.x + t2 * (p2.x - p1.x);
+  const oy2 = p1.y + t2 * (p2.y - p1.y);
+
+  const g     = GRID * state.zoom;
+  const thick = Math.max(3, g * 0.3);
+  const color = prev.type === 'door' ? 'rgba(100,170,90,0.85)' : 'rgba(60,130,210,0.85)';
+
+  ctx.strokeStyle = color;
+  ctx.lineWidth   = thick + 2;
+  ctx.lineCap     = 'round';
+  ctx.beginPath();
+  ctx.moveTo(ox1, oy1);
+  ctx.lineTo(ox2, oy2);
+  ctx.stroke();
+
+  // Dimension label
+  const widthM = prev.width * UNIT;
+  ctx.fillStyle    = prev.type === 'door' ? '#3a8a30' : '#2060b0';
+  ctx.font         = '11px system-ui';
+  ctx.textAlign    = 'center';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText(`${widthM.toFixed(1)} m`, (ox1 + ox2) / 2, (oy1 + oy2) / 2 - 7);
 }
 
 function draw2D() {
@@ -76,73 +260,43 @@ function draw2D() {
   const H = canvas2d.height;
   ctx.clearRect(0, 0, W, H);
 
-  // Canvas background
   ctx.fillStyle = '#ede8e0';
   ctx.fillRect(0, 0, W, H);
 
-  const g = GRID * state.zoom;
+  const g   = GRID * state.zoom;
   const sx0 = Math.floor(-state.panX / g);
   const sy0 = Math.floor(-state.panY / g);
   const sx1 = Math.ceil((W - state.panX) / g);
   const sy1 = Math.ceil((H - state.panY) / g);
 
-  // Minor grid lines
   ctx.strokeStyle = 'rgba(160,148,135,0.22)';
-  ctx.lineWidth = 1;
+  ctx.lineWidth   = 1;
   ctx.beginPath();
-  for (let x = sx0; x <= sx1; x++) {
-    const px = x * g + state.panX;
-    ctx.moveTo(px, 0); ctx.lineTo(px, H);
-  }
-  for (let y = sy0; y <= sy1; y++) {
-    const py = y * g + state.panY;
-    ctx.moveTo(0, py); ctx.lineTo(W, py);
-  }
+  for (let x = sx0; x <= sx1; x++) { const px = x * g + state.panX; ctx.moveTo(px, 0); ctx.lineTo(px, H); }
+  for (let y = sy0; y <= sy1; y++) { const py = y * g + state.panY; ctx.moveTo(0, py); ctx.lineTo(W, py); }
   ctx.stroke();
 
-  // Major grid lines (every 2 units = 1 m)
   ctx.strokeStyle = 'rgba(160,148,135,0.50)';
-  ctx.lineWidth = 1;
+  ctx.lineWidth   = 1;
   ctx.beginPath();
-  for (let x = sx0; x <= sx1; x++) {
-    if (x % 2 === 0) {
-      const px = x * g + state.panX;
-      ctx.moveTo(px, 0); ctx.lineTo(px, H);
-    }
-  }
-  for (let y = sy0; y <= sy1; y++) {
-    if (y % 2 === 0) {
-      const py = y * g + state.panY;
-      ctx.moveTo(0, py); ctx.lineTo(W, py);
-    }
-  }
+  for (let x = sx0; x <= sx1; x++) { if (x % 2 === 0) { const px = x * g + state.panX; ctx.moveTo(px, 0); ctx.lineTo(px, H); } }
+  for (let y = sy0; y <= sy1; y++) { if (y % 2 === 0) { const py = y * g + state.panY; ctx.moveTo(0, py); ctx.lineTo(W, py); } }
   ctx.stroke();
 
-  // ── Walls ──
-  const wallThickPx = Math.max(3, g * 0.3);
-  ctx.lineCap = 'round';
+  // Walls (with opening gaps)
   for (let i = 0; i < state.walls.length; i++) {
-    const w   = state.walls[i];
-    const p1  = gridToScreen(w.x1, w.y1);
-    const p2  = gridToScreen(w.x2, w.y2);
-    const isHov = i === state.hoverWall;
-
-    ctx.strokeStyle = isHov ? '#c04040' : '#4a3f35';
-    ctx.lineWidth   = isHov ? wallThickPx + 2 : wallThickPx;
-    ctx.beginPath();
-    ctx.moveTo(p1.x, p1.y);
-    ctx.lineTo(p2.x, p2.y);
-    ctx.stroke();
+    drawWall(state.walls[i], i === state.hoverWall);
   }
 
-  // ── Wall preview while drawing ──
+  // Wall drawing preview
   if (state.tool === 'wall' && state.wallStart && state.hoverPt) {
-    const end = orthoEnd(state.wallStart, state.hoverPt);
-    const p1  = gridToScreen(state.wallStart.x, state.wallStart.y);
-    const p2  = gridToScreen(end.x, end.y);
+    const end     = orthoEnd(state.wallStart, state.hoverPt);
+    const p1      = gridToScreen(state.wallStart.x, state.wallStart.y);
+    const p2      = gridToScreen(end.x, end.y);
+    const thick   = Math.max(3, g * 0.3);
 
     ctx.strokeStyle = 'rgba(74,63,53,0.38)';
-    ctx.lineWidth   = wallThickPx;
+    ctx.lineWidth   = thick;
     ctx.lineCap     = 'round';
     ctx.setLineDash([g * 0.45, g * 0.2]);
     ctx.beginPath();
@@ -151,44 +305,124 @@ function draw2D() {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Length label
     const lenM = Math.hypot(end.x - state.wallStart.x, end.y - state.wallStart.y) * UNIT;
     if (lenM > 0) {
-      const mx2 = (p1.x + p2.x) / 2;
-      const my2 = (p1.y + p2.y) / 2;
       ctx.fillStyle    = '#8b7355';
       ctx.font         = '11px system-ui';
       ctx.textAlign    = 'center';
       ctx.textBaseline = 'bottom';
-      ctx.fillText(`${lenM.toFixed(1)} m`, mx2, my2 - 6);
+      ctx.fillText(`${lenM.toFixed(1)} m`, (p1.x + p2.x) / 2, (p1.y + p2.y) / 2 - 6);
     }
   }
 
-  // ── Snap indicator ──
+  // Snap indicator (wall tool)
   if (state.tool === 'wall' && state.hoverPt) {
     const snapPt = state.wallStart ? orthoEnd(state.wallStart, state.hoverPt) : state.hoverPt;
-
     if (state.wallStart) {
       const sp1 = gridToScreen(state.wallStart.x, state.wallStart.y);
       ctx.fillStyle = '#8b7355';
-      ctx.beginPath();
-      ctx.arc(sp1.x, sp1.y, 5, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.beginPath(); ctx.arc(sp1.x, sp1.y, 5, 0, Math.PI * 2); ctx.fill();
     }
-
     const sp = gridToScreen(snapPt.x, snapPt.y);
     ctx.fillStyle   = '#8b7355';
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth   = 1.5;
-    ctx.beginPath();
-    ctx.arc(sp.x, sp.y, 4.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
+    ctx.beginPath(); ctx.arc(sp.x, sp.y, 4.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
   }
+
+  // Opening placement preview
+  drawOpeningPreview();
 }
 
 // ── 3D SCENE ──────────────────────────────────────────────
 let renderer, scene, camera, orbitCtrl;
+
+function addBox(cx, cy, cz, bw, bh, bd, mat) {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), mat);
+  mesh.position.set(cx, cy, cz);
+  mesh.castShadow       = true;
+  mesh.receiveShadow    = true;
+  mesh.userData.dynamic = true;
+  scene.add(mesh);
+}
+
+function buildWallMeshes(w, wallMat) {
+  const dx      = (w.x2 - w.x1) * UNIT;
+  const dz      = (w.y2 - w.y1) * UNIT;
+  const len     = Math.hypot(dx, dz);
+  if (len < 0.001) return;
+
+  const isH     = Math.abs(dz) < 0.001;
+  const signX   = isH ? (w.x2 >= w.x1 ? 1 : -1) : 0;
+  const signZ   = isH ? 0 : (w.y2 >= w.y1 ? 1 : -1);
+  const wallLen = len / UNIT;  // grid units
+
+  const wallOpenings = state.openings
+    .filter(op => op.wallId === w.id)
+    .sort((a, b) => a.left - b.left);
+
+  if (wallOpenings.length === 0) {
+    // Simple single box (with end caps for clean corners)
+    const cx = (w.x1 + w.x2) / 2 * UNIT;
+    const cz = (w.y1 + w.y2) / 2 * UNIT;
+    addBox(cx, WALL_H / 2, cz, isH ? len + WALL_T : WALL_T, WALL_H, isH ? WALL_T : len + WALL_T, wallMat);
+    return;
+  }
+
+  // Build pieces around openings
+  // [{fromG, toG, yFrom, yTo}] — grid units along wall, meters for Y
+  const pieces = [];
+  let cursor = 0;
+
+  for (const op of wallOpenings) {
+    if (op.left > cursor)
+      pieces.push({ fromG: cursor, toG: op.left, yFrom: 0, yTo: WALL_H });
+
+    // Sill (below window)
+    if (op.fromFloor > 0)
+      pieces.push({ fromG: op.left, toG: op.left + op.width, yFrom: 0, yTo: op.fromFloor * UNIT });
+
+    // Header (above opening)
+    const topM = (op.fromFloor + op.height) * UNIT;
+    if (topM < WALL_H)
+      pieces.push({ fromG: op.left, toG: op.left + op.width, yFrom: topM, yTo: WALL_H });
+
+    cursor = op.left + op.width;
+  }
+  if (cursor < wallLen)
+    pieces.push({ fromG: cursor, toG: wallLen, yFrom: 0, yTo: WALL_H });
+
+  for (const piece of pieces) {
+    const lenG = piece.toG - piece.fromG;
+    const pieceH = piece.yTo - piece.yFrom;
+    if (lenG < 0.001 || pieceH < 0.001) continue;
+
+    // Add end-cap padding on wall ends only
+    const fromG = piece.fromG === 0       ? piece.fromG - WALL_T / (2 * UNIT) : piece.fromG;
+    const toG   = piece.toG   >= wallLen  ? piece.toG   + WALL_T / (2 * UNIT) : piece.toG;
+    const adjLen = (toG - fromG) * UNIT;
+    const midG   = (fromG + toG) / 2;
+
+    const cx = w.x1 * UNIT + signX * midG * UNIT;
+    const cz = w.y1 * UNIT + signZ * midG * UNIT;
+    const cy = piece.yFrom + pieceH / 2;
+
+    addBox(cx, cy, cz, isH ? adjLen : WALL_T, pieceH, isH ? WALL_T : adjLen, wallMat);
+  }
+
+  // Window glass planes
+  const glassMat = new THREE.MeshLambertMaterial({ color: 0xadd8e6, transparent: true, opacity: 0.28 });
+  for (const op of wallOpenings) {
+    if (op.type !== 'window') continue;
+    const opW  = op.width  * UNIT;
+    const opH  = op.height * UNIT;
+    const midG = op.left + op.width / 2;
+    const cx   = w.x1 * UNIT + signX * midG * UNIT;
+    const cz   = w.y1 * UNIT + signZ * midG * UNIT;
+    const cy   = op.fromFloor * UNIT + opH / 2;
+    addBox(cx, cy, cz, isH ? opW : 0.02, opH, isH ? 0.02 : opW, glassMat);
+  }
+}
 
 function init3D() {
   const container = document.getElementById('view-3d');
@@ -214,40 +448,37 @@ function init3D() {
   orbitCtrl.maxDistance    = 50;
   orbitCtrl.maxPolarAngle  = Math.PI / 2 - 0.02;
 
-  // Lighting
-  const ambLight = new THREE.AmbientLight(0xfff8f2, 0.55);
-  scene.add(ambLight);
+  scene.add(new THREE.AmbientLight(0xfff8f2, 0.55));
 
-  const sunLight = new THREE.DirectionalLight(0xfff4e0, 1.3);
-  sunLight.position.set(12, 22, 10);
-  sunLight.castShadow              = true;
-  sunLight.shadow.mapSize.width    = 2048;
-  sunLight.shadow.mapSize.height   = 2048;
-  sunLight.shadow.camera.near      = 0.5;
-  sunLight.shadow.camera.far       = 80;
-  sunLight.shadow.camera.left      = -25;
-  sunLight.shadow.camera.right     = 25;
-  sunLight.shadow.camera.top       = 25;
-  sunLight.shadow.camera.bottom    = -25;
-  sunLight.shadow.bias             = -0.001;
-  scene.add(sunLight);
+  const sun = new THREE.DirectionalLight(0xfff4e0, 1.3);
+  sun.position.set(12, 22, 10);
+  sun.castShadow             = true;
+  sun.shadow.mapSize.width   = 2048;
+  sun.shadow.mapSize.height  = 2048;
+  sun.shadow.camera.near     = 0.5;
+  sun.shadow.camera.far      = 80;
+  sun.shadow.camera.left     = -25;
+  sun.shadow.camera.right    = 25;
+  sun.shadow.camera.top      = 25;
+  sun.shadow.camera.bottom   = -25;
+  sun.shadow.bias            = -0.001;
+  scene.add(sun);
 
-  const fillLight = new THREE.DirectionalLight(0xd0e8ff, 0.35);
-  fillLight.position.set(-8, 10, -5);
-  scene.add(fillLight);
+  const fill = new THREE.DirectionalLight(0xd0e8ff, 0.35);
+  fill.position.set(-8, 10, -5);
+  scene.add(fill);
 
-  // Floor
-  const floorGeo = new THREE.PlaneGeometry(60, 60);
-  const floorMat = new THREE.MeshLambertMaterial({ color: 0xf5efe6 });
-  const floor    = new THREE.Mesh(floorGeo, floorMat);
-  floor.rotation.x   = -Math.PI / 2;
+  const floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(60, 60),
+    new THREE.MeshLambertMaterial({ color: 0xf5efe6 })
+  );
+  floor.rotation.x    = -Math.PI / 2;
   floor.receiveShadow = true;
   scene.add(floor);
 
-  // Grid helper (very subtle)
-  const gridHelper = new THREE.GridHelper(60, 120, 0xddd8d0, 0xe8e4dc);
-  gridHelper.position.y = 0.001;
-  scene.add(gridHelper);
+  const grid = new THREE.GridHelper(60, 120, 0xddd8d0, 0xe8e4dc);
+  grid.position.y = 0.001;
+  scene.add(grid);
 
   resize3D();
 }
@@ -256,52 +487,23 @@ function rebuild3D() {
   if (!state.dirty3d) return;
   state.dirty3d = false;
 
-  // Remove previously built objects
   for (let i = scene.children.length - 1; i >= 0; i--) {
     if (scene.children[i].userData.dynamic) scene.remove(scene.children[i]);
   }
 
   const wallMat = new THREE.MeshLambertMaterial({ color: 0xf5f0e8 });
-
-  for (const w of state.walls) {
-    const dx  = (w.x2 - w.x1) * UNIT;
-    const dz  = (w.y2 - w.y1) * UNIT;
-    const len = Math.hypot(dx, dz);
-    if (len < 0.001) continue;
-
-    const cx = (w.x1 + w.x2) / 2 * UNIT;
-    const cz = (w.y1 + w.y2) / 2 * UNIT;
-
-    let bw, bd;
-    if (Math.abs(dz) < 0.001) {   // horizontal wall
-      bw = Math.abs(dx) + WALL_T;
-      bd = WALL_T;
-    } else {                       // vertical wall
-      bw = WALL_T;
-      bd = Math.abs(dz) + WALL_T;
-    }
-
-    const geo  = new THREE.BoxGeometry(bw, WALL_H, bd);
-    const mesh = new THREE.Mesh(geo, wallMat);
-    mesh.position.set(cx, WALL_H / 2, cz);
-    mesh.castShadow        = true;
-    mesh.receiveShadow     = true;
-    mesh.userData.dynamic  = true;
-    scene.add(mesh);
-  }
+  for (const w of state.walls) buildWallMeshes(w, wallMat);
 }
 
 function resize3D() {
   const c = document.getElementById('view-3d');
-  const w = c.clientWidth;
-  const h = c.clientHeight;
-  if (!w || !h || !renderer) return;
-  renderer.setSize(w, h);
-  camera.aspect = w / h;
+  if (!c.clientWidth || !c.clientHeight || !renderer) return;
+  renderer.setSize(c.clientWidth, c.clientHeight);
+  camera.aspect = c.clientWidth / c.clientHeight;
   camera.updateProjectionMatrix();
 }
 
-// ── INPUT HANDLING ─────────────────────────────────────────
+// ── INPUT ──────────────────────────────────────────────────
 function getCanvasXY(e) {
   const r = canvas2d.getBoundingClientRect();
   return { mx: e.clientX - r.left, my: e.clientY - r.top };
@@ -313,18 +515,39 @@ canvas2d.addEventListener('mousemove', (e) => {
   if (state.isPanning) {
     state.panX += mx - state.panSX;
     state.panY += my - state.panSY;
-    state.panSX = mx;
-    state.panSY = my;
+    state.panSX = mx; state.panSY = my;
     return;
   }
 
   state.hoverPt = screenToGrid(mx, my);
 
   if (state.tool === 'erase') {
-    state.hoverWall = wallHit(mx, my);
-    canvas2d.style.cursor = state.hoverWall >= 0 ? 'pointer' : 'default';
+    // Opening takes priority over wall in erase mode
+    const opId = openingHit(mx, my);
+    state.hoverOpening = opId;
+    state.hoverWall    = opId ? -1 : wallHit(mx, my);
+    canvas2d.style.cursor = (opId || state.hoverWall >= 0) ? 'pointer' : 'default';
+
+  } else if (state.tool === 'door' || state.tool === 'window') {
+    const wIdx = wallHit(mx, my);
+    if (wIdx >= 0) {
+      const left = snapOpeningLeft(wIdx, mx, my);
+      if (left !== null) {
+        const s = getOpeningSettings();
+        state.openingPreview = { wallIdx: wIdx, left, ...s };
+      } else {
+        state.openingPreview = null;
+      }
+      canvas2d.style.cursor = 'crosshair';
+    } else {
+      state.openingPreview  = null;
+      state.hoverWall       = -1;
+      canvas2d.style.cursor = 'default';
+    }
   } else {
-    state.hoverWall = -1;
+    state.hoverWall       = -1;
+    state.hoverOpening    = null;
+    state.openingPreview  = null;
     canvas2d.style.cursor = 'crosshair';
   }
 });
@@ -332,13 +555,9 @@ canvas2d.addEventListener('mousemove', (e) => {
 canvas2d.addEventListener('mousedown', (e) => {
   const { mx, my } = getCanvasXY(e);
 
-  // Middle-click or Alt+drag → pan
   if (e.button === 1 || (e.button === 0 && e.altKey)) {
-    state.isPanning = true;
-    state.panSX = mx;
-    state.panSY = my;
-    e.preventDefault();
-    return;
+    state.isPanning = true; state.panSX = mx; state.panSY = my;
+    e.preventDefault(); return;
   }
   if (e.button !== 0) return;
 
@@ -350,66 +569,94 @@ canvas2d.addEventListener('mousedown', (e) => {
     } else {
       const end = orthoEnd(state.wallStart, gpt);
       if (end.x !== state.wallStart.x || end.y !== state.wallStart.y) {
-        state.walls.push({ x1: state.wallStart.x, y1: state.wallStart.y, x2: end.x, y2: end.y });
-        state.wallStart = { ...end }; // continue from here
+        state.walls.push({ id: state.nextWallId++, x1: state.wallStart.x, y1: state.wallStart.y, x2: end.x, y2: end.y });
+        state.wallStart = { ...end };
         state.dirty3d   = true;
       }
     }
+
   } else if (state.tool === 'erase') {
-    if (state.hoverWall >= 0) {
+    if (state.hoverOpening) {
+      state.openings     = state.openings.filter(op => op.id !== state.hoverOpening);
+      state.hoverOpening = null;
+      state.dirty3d      = true;
+    } else if (state.hoverWall >= 0) {
+      const wallId = state.walls[state.hoverWall].id;
+      state.openings = state.openings.filter(op => op.wallId !== wallId);
       state.walls.splice(state.hoverWall, 1);
       state.hoverWall = -1;
       state.dirty3d   = true;
+    }
+
+  } else if (state.tool === 'door' || state.tool === 'window') {
+    if (state.openingPreview) {
+      const prev = state.openingPreview;
+      state.openings.push({
+        id:        state.nextId++,
+        wallId:    state.walls[prev.wallIdx].id,
+        left:      prev.left,
+        width:     prev.width,
+        height:    prev.height,
+        fromFloor: prev.fromFloor,
+        type:      prev.type,
+      });
+      state.dirty3d = true;
     }
   }
 
   updateStatus();
 });
 
-canvas2d.addEventListener('mouseup', (e) => {
-  if (state.isPanning || e.button === 1) { state.isPanning = false; }
-});
-
-canvas2d.addEventListener('mouseleave', () => {
-  state.hoverPt   = null;
-  state.isPanning = false;
-});
-
+canvas2d.addEventListener('mouseup',   (e) => { if (e.button === 1 || state.isPanning) state.isPanning = false; });
+canvas2d.addEventListener('mouseleave', ()  => { state.hoverPt = null; state.isPanning = false; state.openingPreview = null; });
 canvas2d.addEventListener('contextmenu', (e) => {
   e.preventDefault();
-  if (state.tool === 'wall') {
-    state.wallStart = null;
-    updateStatus();
-  }
+  if (state.tool === 'wall') { state.wallStart = null; updateStatus(); }
 });
-
 canvas2d.addEventListener('dblclick', () => {
-  if (state.tool === 'wall') {
-    state.wallStart = null;
-    updateStatus();
-  }
+  if (state.tool === 'wall') { state.wallStart = null; updateStatus(); }
 });
-
 canvas2d.addEventListener('wheel', (e) => {
   e.preventDefault();
   const { mx, my } = getCanvasXY(e);
-  const oldZoom    = state.zoom;
-  const factor     = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-  state.zoom       = Math.max(0.25, Math.min(5, state.zoom * factor));
-  state.panX       = mx - (mx - state.panX) * (state.zoom / oldZoom);
-  state.panY       = my - (my - state.panY) * (state.zoom / oldZoom);
+  const oldZoom = state.zoom;
+  state.zoom    = Math.max(0.25, Math.min(5, state.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+  state.panX    = mx - (mx - state.panX) * (state.zoom / oldZoom);
+  state.panY    = my - (my - state.panY) * (state.zoom / oldZoom);
 }, { passive: false });
 
 window.addEventListener('mouseup', () => { state.isPanning = false; });
 
-// ── UI CONTROLS ────────────────────────────────────────────
+// ── UI ─────────────────────────────────────────────────────
+const openingSettingsEl = document.getElementById('opening-settings');
+const doorSettingsEl    = document.getElementById('door-settings');
+const windowSettingsEl  = document.getElementById('window-settings');
+
 document.querySelectorAll('[data-tool]').forEach(btn => {
   btn.addEventListener('click', () => {
-    state.tool      = btn.dataset.tool;
+    const tool = btn.dataset.tool;
+    state.tool      = tool;
     state.wallStart = null;
+    state.openingPreview = null;
 
     document.querySelectorAll('[data-tool]').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
+
+    // Show/hide opening settings panel
+    if (tool === 'door') {
+      openingSettingsEl.classList.remove('hidden');
+      doorSettingsEl.classList.remove('hidden');
+      windowSettingsEl.classList.add('hidden');
+    } else if (tool === 'window') {
+      openingSettingsEl.classList.remove('hidden');
+      doorSettingsEl.classList.add('hidden');
+      windowSettingsEl.classList.remove('hidden');
+    } else {
+      openingSettingsEl.classList.add('hidden');
+    }
+
+    const cursors = { wall: 'crosshair', erase: 'default', door: 'default', window: 'default' };
+    canvas2d.style.cursor = cursors[tool] ?? 'default';
 
     updateStatus();
   });
@@ -420,30 +667,29 @@ document.querySelectorAll('.view-btn').forEach(btn => {
     state.view = btn.dataset.view;
     document.querySelectorAll('.view-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-
-    const cw  = document.getElementById('canvas-wrap');
-    const v3d = document.getElementById('view-3d');
-    cw.style.display  = state.view !== '3d' ? 'block' : 'none';
-    v3d.style.display = state.view !== '2d' ? 'block' : 'none';
-
+    document.getElementById('canvas-wrap').style.display = state.view !== '3d' ? 'block' : 'none';
+    document.getElementById('view-3d').style.display     = state.view !== '2d' ? 'block' : 'none';
     setTimeout(() => { resize3D(); resizeCanvas(); }, 50);
   });
 });
 
 document.getElementById('btn-clear').addEventListener('click', () => {
-  if (!confirm('Rensa alla väggar?')) return;
-  state.walls     = [];
-  state.wallStart = null;
-  state.dirty3d   = true;
+  if (!confirm('Rensa alla väggar och öppningar?')) return;
+  state.walls      = [];
+  state.openings   = [];
+  state.wallStart  = null;
+  state.dirty3d    = true;
   updateStatus();
 });
 
 function updateStatus() {
   const msgs = {
-    wall:  state.wallStart
-             ? 'Klicka för att placera slutpunkt  ·  Högerklicka = avbryt'
-             : 'Klicka för att starta en vägg',
-    erase: 'Klicka på en vägg för att ta bort den',
+    wall:   state.wallStart
+              ? 'Klicka för att placera slutpunkt  ·  Högerklicka = avbryt'
+              : 'Klicka för att starta en vägg',
+    erase:  'Klicka på en vägg eller öppning för att ta bort den',
+    door:   'Håll över en vägg och klicka för att placera dörröppning',
+    window: 'Håll över en vägg och klicka för att placera fönster',
   };
   document.getElementById('status').textContent = msgs[state.tool] ?? '';
 }
@@ -451,18 +697,12 @@ function updateStatus() {
 // ── CANVAS RESIZE ──────────────────────────────────────────
 function resizeCanvas() {
   const wrap = document.getElementById('canvas-wrap');
-  const w    = wrap.clientWidth;
-  const h    = wrap.clientHeight;
+  const w = wrap.clientWidth, h = wrap.clientHeight;
   if (!w || !h) return;
-
-  const firstResize = canvas2d.width === 0;
+  const first = canvas2d.width === 0;
   canvas2d.width  = w;
   canvas2d.height = h;
-
-  if (firstResize) {
-    state.panX = w / 2 - 10 * GRID;
-    state.panY = h / 2 - 8  * GRID;
-  }
+  if (first) { state.panX = w / 2 - 10 * GRID; state.panY = h / 2 - 8 * GRID; }
 }
 
 // ── MAIN LOOP ──────────────────────────────────────────────
@@ -472,24 +712,16 @@ function loop() {
   requestAnimationFrame(loop);
 
   const wrap = document.getElementById('canvas-wrap');
-  if (wrap.clientWidth !== canvas2d.width || wrap.clientHeight !== canvas2d.height) {
-    resizeCanvas();
-  }
+  if (wrap.clientWidth !== canvas2d.width || wrap.clientHeight !== canvas2d.height) resizeCanvas();
 
   const v3d = document.getElementById('view-3d');
   if (v3d.clientWidth !== lastW3d || v3d.clientHeight !== lastH3d) {
-    lastW3d = v3d.clientWidth;
-    lastH3d = v3d.clientHeight;
+    lastW3d = v3d.clientWidth; lastH3d = v3d.clientHeight;
     resize3D();
   }
 
   if (state.view !== '3d') draw2D();
-
-  if (renderer && state.view !== '2d') {
-    rebuild3D();
-    orbitCtrl.update();
-    renderer.render(scene, camera);
-  }
+  if (renderer && state.view !== '2d') { rebuild3D(); orbitCtrl.update(); renderer.render(scene, camera); }
 }
 
 // ── INIT ───────────────────────────────────────────────────
@@ -497,6 +729,15 @@ function init() {
   resizeCanvas();
   init3D();
   updateStatus();
+
+  // Always show one decimal in dimension inputs (e.g. "1.0" not "1")
+  document.querySelectorAll('.setting-row input[type="number"]').forEach(input => {
+    input.value = parseFloat(input.value).toFixed(1);
+    input.addEventListener('change', () => {
+      input.value = parseFloat(input.value).toFixed(1);
+    });
+  });
+
   loop();
 }
 
