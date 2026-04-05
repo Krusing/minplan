@@ -13,6 +13,7 @@ const state = {
   gardens:        [],    // [{id, x1, y1, x2, y2}]
   trees:          [],    // [{id, x, y, radius, type}] type: 'tree'|'bush'
   floors3d:       [],    // [{id, x1, y1, x2, y2, color}]
+  furniture:      [],    // [{id, x1, y1, x2, y2, height, label, rotation}]
   nextWallId:     1,
   nextId:         1,
 
@@ -359,6 +360,45 @@ function draw2D() {
     const p2 = gridToScreen(state.hoverPt.x,   state.hoverPt.y);
     ctx.fillStyle   = 'rgba(110,170,80,0.18)';
     ctx.strokeStyle = 'rgba(80,140,60,0.50)';
+    ctx.lineWidth   = 1.5;
+    ctx.setLineDash([6, 3]);
+    ctx.beginPath();
+    ctx.rect(Math.min(p1.x,p2.x), Math.min(p1.y,p2.y), Math.abs(p2.x-p1.x), Math.abs(p2.y-p1.y));
+    ctx.fill(); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Furniture
+  for (const furn of state.furniture) {
+    const sp1 = gridToScreen(furn.x1, furn.y1);
+    const sp2 = gridToScreen(furn.x2, furn.y2);
+    const fw = Math.abs(sp2.x - sp1.x), fh = Math.abs(sp2.y - sp1.y);
+    const scx = (sp1.x + sp2.x) / 2, scy = (sp1.y + sp2.y) / 2;
+    ctx.save();
+    ctx.translate(scx, scy);
+    ctx.rotate((furn.rotation || 0) * Math.PI / 180);
+    ctx.fillStyle   = 'rgba(180,140,90,0.35)';
+    ctx.strokeStyle = 'rgba(130,90,50,0.7)';
+    ctx.lineWidth   = 1.5;
+    ctx.beginPath();
+    ctx.rect(-fw / 2, -fh / 2, fw, fh);
+    ctx.fill(); ctx.stroke();
+    if (furn.label) {
+      ctx.fillStyle    = 'rgba(80,50,20,0.85)';
+      ctx.font         = `${Math.max(9, Math.min(13, fw / 5))}px system-ui`;
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(furn.label, 0, 0);
+    }
+    ctx.restore();
+  }
+
+  // Furniture placement preview
+  if (state.tool === 'furniture' && state.rectStart && state.hoverPt) {
+    const p1 = gridToScreen(state.rectStart.x, state.rectStart.y);
+    const p2 = gridToScreen(state.hoverPt.x,   state.hoverPt.y);
+    ctx.fillStyle   = 'rgba(180,140,90,0.20)';
+    ctx.strokeStyle = 'rgba(130,90,50,0.50)';
     ctx.lineWidth   = 1.5;
     ctx.setLineDash([6, 3]);
     ctx.beginPath();
@@ -733,6 +773,23 @@ function rebuild3D() {
     buildWallMeshes(w, wallMat);
   }
 
+  // Furniture
+  const furnMat = new THREE.MeshLambertMaterial({ color: 0xc8a060 });
+  for (const furn of state.furniture) {
+    const w   = Math.abs(furn.x2 - furn.x1) * UNIT;
+    const d   = Math.abs(furn.y2 - furn.y1) * UNIT;
+    const h   = furn.height;
+    const cx  = (furn.x1 + furn.x2) / 2 * UNIT;
+    const cz  = (furn.y1 + furn.y2) / 2 * UNIT;
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), furnMat);
+    mesh.position.set(cx, h / 2, cz);
+    mesh.rotation.y    = (furn.rotation || 0) * Math.PI / 180;
+    mesh.castShadow    = true;
+    mesh.receiveShadow = true;
+    mesh.userData.dynamic = true;
+    scene.add(mesh);
+  }
+
   // Trees / bushes
   for (const t of state.trees) {
     const cx = t.x * UNIT, cz = t.y * UNIT;
@@ -910,6 +967,21 @@ canvas2d.addEventListener('mousedown', (e) => {
     state.trees.push({ id: state.nextId++, x: gpt.x, y: gpt.y, radius, type });
     state.dirty3d = true;
 
+  } else if (state.tool === 'furniture') {
+    if (!state.rectStart) {
+      state.rectStart = { ...gpt };
+    } else {
+      const s = state.rectStart, e = gpt;
+      if (s.x !== e.x || s.y !== e.y) {
+        const height   = parseFloat(document.getElementById('furn-height').value);
+        const label    = document.getElementById('furn-label').value.trim();
+        const rotation = parseInt(document.getElementById('furn-rotation').value, 10);
+        state.furniture.push({ id: state.nextId++, x1: Math.min(s.x,e.x), y1: Math.min(s.y,e.y), x2: Math.max(s.x,e.x), y2: Math.max(s.y,e.y), height, label, rotation });
+        state.dirty3d = true;
+      }
+      state.rectStart = null;
+    }
+
   } else if (state.tool === 'floor3d') {
     if (!state.rectStart) {
       state.rectStart = { ...gpt };
@@ -1006,6 +1078,7 @@ document.querySelectorAll('[data-tool]').forEach(btn => {
     document.getElementById('paint-settings').classList.toggle('hidden', tool !== 'paint');
     document.getElementById('tree-settings').classList.toggle('hidden', tool !== 'tree');
     document.getElementById('floor3d-settings').classList.toggle('hidden', tool !== 'floor3d');
+    document.getElementById('furniture-settings').classList.toggle('hidden', tool !== 'furniture');
 
     const cursors = { wall: 'crosshair', erase: 'default', door: 'default', window: 'default', paint: 'default', garden: 'crosshair', tree: 'crosshair', floor3d: 'crosshair', furniture: 'crosshair' };
     canvas2d.style.cursor = cursors[tool] ?? 'default';
@@ -1074,6 +1147,7 @@ document.getElementById('btn-clear').addEventListener('click', () => {
   state.gardens    = [];
   state.trees      = [];
   state.floors3d   = [];
+  state.furniture  = [];
   state.wallStart  = null;
   state.rectStart  = null;
   state.dirty3d    = true;
@@ -1091,7 +1165,8 @@ function updateStatus() {
     paint:  'Klicka på en vägg för att applicera vald färg',
     garden: state.rectStart ? 'Klicka för att placera hörn 2  ·  Högerklicka = avbryt' : 'Klicka för att placera hörn 1',
     tree:    'Klicka för att placera träd eller buske',
-    floor3d: state.rectStart ? 'Klicka för att placera hörn 2  ·  Högerklicka = avbryt' : 'Klicka för att placera hörn 1',
+    floor3d:   state.rectStart ? 'Klicka för att placera hörn 2  ·  Högerklicka = avbryt' : 'Klicka för att placera hörn 1',
+    furniture: state.rectStart ? 'Klicka för att placera hörn 2  ·  Högerklicka = avbryt' : 'Klicka för att placera hörn 1',
   };
   document.getElementById('status').textContent = msgs[state.tool] ?? '';
 }
