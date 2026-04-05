@@ -30,7 +30,7 @@ const state = {
   nextWallId:     1,
   nextId:         1,
 
-  tool:           'wall', // wall | erase | door | window | paint | garden | tree | floor3d | furniture
+  tool:           'pan',  // pan | wall | erase | door | window | paint | garden | tree | floor3d | furniture
   rectStart:      null,  // {x,y} start for rectangle tools (garden/floor3d/furniture)
   wallStart:      null,   // {x,y} or null
   hoverPt:        null,
@@ -981,6 +981,7 @@ canvas2d.addEventListener('mousemove', (e) => {
     state.panX += mx - state.panSX;
     state.panY += my - state.panSY;
     state.panSX = mx; state.panSY = my;
+    if (state.tool === 'pan') canvas2d.style.cursor = 'grabbing';
     return;
   }
 
@@ -1009,6 +1010,8 @@ canvas2d.addEventListener('mousemove', (e) => {
       state.hoverWall       = -1;
       canvas2d.style.cursor = 'default';
     }
+  } else if (state.tool === 'pan') {
+    canvas2d.style.cursor = 'grab';
   } else if (state.tool === 'paint') {
     state.hoverWall    = wallHit(mx, my);
     canvas2d.style.cursor = state.hoverWall >= 0 ? 'pointer' : 'default';
@@ -1023,7 +1026,7 @@ canvas2d.addEventListener('mousemove', (e) => {
 canvas2d.addEventListener('mousedown', (e) => {
   const { mx, my } = getCanvasXY(e);
 
-  if (e.button === 1 || (e.button === 0 && e.altKey)) {
+  if (e.button === 1 || (e.button === 0 && e.altKey) || (e.button === 0 && state.tool === 'pan')) {
     state.isPanning = true; state.panSX = mx; state.panSY = my;
     e.preventDefault(); return;
   }
@@ -1201,7 +1204,7 @@ document.querySelectorAll('[data-tool]').forEach(btn => {
     document.getElementById('furniture-settings').classList.toggle('hidden', tool !== 'furniture');
     document.getElementById('stair-settings').classList.toggle('hidden', tool !== 'stair');
 
-    const cursors = { wall: 'crosshair', erase: 'default', door: 'default', window: 'default', paint: 'default', garden: 'crosshair', tree: 'crosshair', floor3d: 'crosshair', furniture: 'crosshair', stair: 'crosshair' };
+    const cursors = { pan: 'grab', wall: 'crosshair', erase: 'default', door: 'default', window: 'default', paint: 'default', garden: 'crosshair', tree: 'crosshair', floor3d: 'crosshair', furniture: 'crosshair', stair: 'crosshair' };
     canvas2d.style.cursor = cursors[tool] ?? 'default';
 
     updateStatus();
@@ -1339,6 +1342,7 @@ document.getElementById('btn-clear').addEventListener('click', () => {
 
 function updateStatus() {
   const msgs = {
+    pan:    'Klicka och dra för att panorera  ·  Scroll = zooma',
     wall:   state.wallStart
               ? 'Klicka för att placera slutpunkt  ·  Högerklicka = avbryt'
               : 'Klicka för att starta en vägg',
