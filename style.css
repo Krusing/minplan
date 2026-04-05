@@ -133,15 +133,19 @@ html, body {
 
 /* ── SIDEBAR ── */
 #sidebar {
-  width: 160px;
+  width: 168px;
   flex-shrink: 0;
   background: var(--surface);
   border-right: 1px solid var(--border);
+  overflow-y: auto;
   padding: 10px 6px 16px;
   display: flex;
   flex-direction: column;
   gap: 1px;
 }
+
+#sidebar::-webkit-scrollbar { width: 4px; }
+#sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
 .section-label {
   font-size: 10px;
@@ -188,6 +192,68 @@ html, body {
 
 .tool-btn.active .tool-icon {
   opacity: 1;
+}
+
+.sidebar-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 6px 8px;
+}
+
+/* ── OPENING SETTINGS PANEL ── */
+#opening-settings {
+  margin: 6px 6px 0;
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+}
+
+.settings-panel.hidden,
+#opening-settings.hidden {
+  display: none;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 0;
+}
+
+.setting-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex: 1;
+  white-space: nowrap;
+}
+
+.setting-row input[type="number"] {
+  width: 48px;
+  padding: 3px 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  font-size: 12px;
+  color: var(--text);
+  text-align: right;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.setting-row input[type="number"]::-webkit-inner-spin-button,
+.setting-row input[type="number"]::-webkit-outer-spin-button {
+  opacity: 0.5;
+}
+
+.setting-row input[type="number"]:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.setting-unit {
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 /* ── 2D CANVAS ── */
