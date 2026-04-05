@@ -11,6 +11,7 @@ const state = {
   walls:          [],    // [{id, x1, y1, x2, y2, color}]
   openings:       [],    // [{id, wallId, left, width, height, fromFloor, type}]
   gardens:        [],    // [{id, x1, y1, x2, y2}]
+  trees:          [],    // [{id, x, y, radius, type}] type: 'tree'|'bush'
   nextWallId:     1,
   nextId:         1,
 
@@ -294,6 +295,34 @@ function draw2D() {
     ctx.beginPath();
     ctx.rect(Math.min(p1.x,p2.x), Math.min(p1.y,p2.y), Math.abs(p2.x-p1.x), Math.abs(p2.y-p1.y));
     ctx.fill(); ctx.stroke();
+  }
+
+  // Trees / bushes
+  for (const t of state.trees) {
+    const sp = gridToScreen(t.x, t.y);
+    const r  = t.radius * GRID * state.zoom;
+    ctx.beginPath();
+    ctx.arc(sp.x, sp.y, r, 0, Math.PI * 2);
+    ctx.fillStyle   = t.type === 'tree' ? 'rgba(60,120,50,0.55)' : 'rgba(90,150,60,0.45)';
+    ctx.strokeStyle = t.type === 'tree' ? 'rgba(40,90,30,0.8)'   : 'rgba(60,120,40,0.7)';
+    ctx.lineWidth   = 1;
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  // Tree hover preview
+  if (state.tool === 'tree' && state.hoverPt) {
+    const sp = gridToScreen(state.hoverPt.x, state.hoverPt.y);
+    const r  = parseFloat(document.getElementById('tree-radius').value) * GRID * state.zoom;
+    ctx.beginPath();
+    ctx.arc(sp.x, sp.y, r, 0, Math.PI * 2);
+    ctx.fillStyle   = 'rgba(80,160,60,0.25)';
+    ctx.strokeStyle = 'rgba(60,130,40,0.5)';
+    ctx.lineWidth   = 1.5;
+    ctx.setLineDash([4, 2]);
+    ctx.fill();
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
 
   // Garden placement preview
@@ -676,6 +705,34 @@ function rebuild3D() {
     buildWallMeshes(w, wallMat);
   }
 
+  // Trees / bushes
+  for (const t of state.trees) {
+    const cx = t.x * UNIT, cz = t.y * UNIT;
+    const r  = t.radius * UNIT;
+    if (t.type === 'tree') {
+      // Trunk
+      const trunkMat = new THREE.MeshLambertMaterial({ color: 0x7a5230 });
+      const trunk    = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.10, 1.2, 6), trunkMat);
+      trunk.position.set(cx, 0.6, cz);
+      trunk.userData.dynamic = true;
+      scene.add(trunk);
+      // Canopy
+      const canopyMat = new THREE.MeshLambertMaterial({ color: 0x3a7a28 });
+      const canopy    = new THREE.Mesh(new THREE.SphereGeometry(r, 8, 6), canopyMat);
+      canopy.position.set(cx, 1.2 + r * 0.7, cz);
+      canopy.userData.dynamic = true;
+      scene.add(canopy);
+    } else {
+      // Bush – low sphere
+      const bushMat = new THREE.MeshLambertMaterial({ color: 0x5a9a3c });
+      const bush    = new THREE.Mesh(new THREE.SphereGeometry(r, 8, 5), bushMat);
+      bush.scale.y = 0.6;
+      bush.position.set(cx, r * 0.6, cz);
+      bush.userData.dynamic = true;
+      scene.add(bush);
+    }
+  }
+
   // Gardens
   const gardenMat = new THREE.MeshLambertMaterial({ color: 0x6aaa44, transparent: true, opacity: 0.7 });
   for (const gd of state.gardens) {
@@ -804,6 +861,12 @@ canvas2d.addEventListener('mousedown', (e) => {
       state.dirty3d = true;
     }
 
+  } else if (state.tool === 'tree') {
+    const type   = document.getElementById('tree-type').value;
+    const radius = parseFloat(document.getElementById('tree-radius').value);
+    state.trees.push({ id: state.nextId++, x: gpt.x, y: gpt.y, radius, type });
+    state.dirty3d = true;
+
   } else if (state.tool === 'garden') {
     if (!state.rectStart) {
       state.rectStart = { ...gpt };
@@ -885,8 +948,9 @@ document.querySelectorAll('[data-tool]').forEach(btn => {
       openingSettingsEl.classList.add('hidden');
     }
     document.getElementById('paint-settings').classList.toggle('hidden', tool !== 'paint');
+    document.getElementById('tree-settings').classList.toggle('hidden', tool !== 'tree');
 
-    const cursors = { wall: 'crosshair', erase: 'default', door: 'default', window: 'default', paint: 'default' };
+    const cursors = { wall: 'crosshair', erase: 'default', door: 'default', window: 'default', paint: 'default', garden: 'crosshair', tree: 'crosshair' };
     canvas2d.style.cursor = cursors[tool] ?? 'default';
 
     updateStatus();
@@ -951,6 +1015,7 @@ document.getElementById('btn-clear').addEventListener('click', () => {
   state.walls      = [];
   state.openings   = [];
   state.gardens    = [];
+  state.trees      = [];
   state.wallStart  = null;
   state.rectStart  = null;
   state.dirty3d    = true;
@@ -967,6 +1032,7 @@ function updateStatus() {
     window: 'Håll över en vägg och klicka för att placera fönster',
     paint:  'Klicka på en vägg för att applicera vald färg',
     garden: state.rectStart ? 'Klicka för att placera hörn 2  ·  Högerklicka = avbryt' : 'Klicka för att placera hörn 1',
+    tree:   'Klicka för att placera träd eller buske',
   };
   document.getElementById('status').textContent = msgs[state.tool] ?? '';
 }

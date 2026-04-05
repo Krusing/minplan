@@ -81,6 +81,29 @@
           Trädgård
         </button>
 
+        <button class="tool-btn" data-tool="tree">
+          <svg class="tool-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+            <circle cx="10" cy="8" r="5" fill="rgba(60,120,50,0.4)" stroke="rgba(40,90,30,0.9)"/>
+            <line x1="10" y1="13" x2="10" y2="18"/>
+          </svg>
+          Träd / Buske
+        </button>
+
+        <div id="tree-settings" class="settings-panel hidden">
+          <div class="setting-row">
+            <span class="setting-label">Typ</span>
+            <select id="tree-type" style="font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:4px;background:var(--surface);">
+              <option value="tree">Träd</option>
+              <option value="bush">Buske</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">Storlek</span>
+            <input type="number" id="tree-radius" value="1.0" min="0.5" max="4.0" step="0.5">
+            <span class="setting-unit">m</span>
+          </div>
+        </div>
+
         <div class="sidebar-sep"></div>
         <div class="section-label">Öppningar</div>
 
