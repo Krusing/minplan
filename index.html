@@ -53,6 +53,21 @@
           Radera
         </button>
 
+        <button class="tool-btn" data-tool="paint">
+          <svg class="tool-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 16 L14 6 L16 4 L16 4 Q17.5 2.5 18 4 L16 6 L6 16 Z"/>
+            <path d="M3 17 Q2 19 4 18 Q5 18 5 17 Q5 16 4 16 Q3 16 3 17Z" fill="currentColor" stroke="none"/>
+          </svg>
+          Färga vägg
+        </button>
+
+        <div id="paint-settings" class="settings-panel hidden">
+          <div class="setting-row">
+            <span class="setting-label">Färg</span>
+            <input type="color" id="wall-color" value="#f5f0e8">
+          </div>
+        </div>
+
         <div class="sidebar-sep"></div>
         <div class="section-label">Öppningar</div>
 

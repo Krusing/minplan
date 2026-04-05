@@ -13,7 +13,7 @@ const state = {
   nextWallId:     1,
   nextId:         1,
 
-  tool:           'wall', // wall | erase | door | window
+  tool:           'wall', // wall | erase | door | window | paint
   wallStart:      null,   // {x,y} or null
   hoverPt:        null,
   hoverWall:      -1,     // wall index (erase/placement hover)
@@ -153,7 +153,7 @@ function drawWall(w, isHov) {
   if (cursor < wallLen) segments.push({ from: cursor, to: wallLen });
 
   ctx.lineCap     = 'round';
-  ctx.strokeStyle = isHov ? '#c04040' : '#4a3f35';
+  ctx.strokeStyle = isHov ? '#c04040' : (w.color || '#4a3f35');
   ctx.lineWidth   = isHov ? thick + 2 : thick;
 
   for (const seg of segments) {
@@ -626,8 +626,10 @@ function rebuild3D() {
     if (scene.children[i].userData.dynamic) scene.remove(scene.children[i]);
   }
 
-  const wallMat = new THREE.MeshLambertMaterial({ color: 0xf5f0e8 });
-  for (const w of state.walls) buildWallMeshes(w, wallMat);
+  for (const w of state.walls) {
+    const wallMat = new THREE.MeshLambertMaterial({ color: w.color ? new THREE.Color(w.color) : 0xf5f0e8 });
+    buildWallMeshes(w, wallMat);
+  }
 }
 
 function resize3D() {
@@ -679,6 +681,9 @@ canvas2d.addEventListener('mousemove', (e) => {
       state.hoverWall       = -1;
       canvas2d.style.cursor = 'default';
     }
+  } else if (state.tool === 'paint') {
+    state.hoverWall    = wallHit(mx, my);
+    canvas2d.style.cursor = state.hoverWall >= 0 ? 'pointer' : 'default';
   } else {
     state.hoverWall       = -1;
     state.hoverOpening    = null;
@@ -721,6 +726,12 @@ canvas2d.addEventListener('mousedown', (e) => {
       state.walls.splice(state.hoverWall, 1);
       state.hoverWall = -1;
       state.dirty3d   = true;
+    }
+
+  } else if (state.tool === 'paint') {
+    if (state.hoverWall >= 0) {
+      state.walls[state.hoverWall].color = document.getElementById('wall-color').value;
+      state.dirty3d = true;
     }
 
   } else if (state.tool === 'door' || state.tool === 'window') {
@@ -789,8 +800,9 @@ document.querySelectorAll('[data-tool]').forEach(btn => {
     } else {
       openingSettingsEl.classList.add('hidden');
     }
+    document.getElementById('paint-settings').classList.toggle('hidden', tool !== 'paint');
 
-    const cursors = { wall: 'crosshair', erase: 'default', door: 'default', window: 'default' };
+    const cursors = { wall: 'crosshair', erase: 'default', door: 'default', window: 'default', paint: 'default' };
     canvas2d.style.cursor = cursors[tool] ?? 'default';
 
     updateStatus();
@@ -834,6 +846,7 @@ function updateStatus() {
     erase:  'Klicka på en vägg eller öppning för att ta bort den',
     door:   'Håll över en vägg och klicka för att placera dörröppning',
     window: 'Håll över en vägg och klicka för att placera fönster',
+    paint:  'Klicka på en vägg för att applicera vald färg',
   };
   document.getElementById('status').textContent = msgs[state.tool] ?? '';
 }
