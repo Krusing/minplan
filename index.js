@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 // ── CONSTANTS ──────────────────────────────────────────────
 const GRID   = 24;    // pixels per grid unit
@@ -332,10 +331,150 @@ function draw2D() {
 
   // Opening placement preview
   drawOpeningPreview();
+
+  // Camera indicator
+  drawCameraIndicator();
+}
+
+function drawCameraIndicator() {
+  // Convert world position to screen: world units → grid units → screen
+  const gx = cam.pos.x / UNIT;
+  const gy = cam.pos.z / UNIT;
+  const sp = gridToScreen(gx, gy);
+
+  const g       = GRID * state.zoom;
+  const fovHalf = (Math.PI / 180) * 35; // half of ~70° display cone
+  const coneLen = g * 5;                // cone length in screen pixels
+
+  // 2D look direction: world (X,Z) → screen (x,y), forward = (-sin yaw, -cos yaw)
+  const tipAngle2d = Math.atan2(-Math.cos(cam.yaw), -Math.sin(cam.yaw));
+
+  // FOV cone
+  const a1 = tipAngle2d - fovHalf;
+  const a2 = tipAngle2d + fovHalf;
+  ctx.beginPath();
+  ctx.moveTo(sp.x, sp.y);
+  ctx.arc(sp.x, sp.y, coneLen, a1, a2);
+  ctx.closePath();
+  ctx.fillStyle   = 'rgba(60,120,220,0.10)';
+  ctx.strokeStyle = 'rgba(60,120,220,0.35)';
+  ctx.lineWidth   = 1;
+  ctx.fill();
+  ctx.stroke();
+
+  // Direction triangle
+  const tipAngle = tipAngle2d;
+  const tipLen   = g * 1.2;
+  const baseHalf = g * 0.55;
+  const perpAngle = tipAngle + Math.PI / 2;
+  const tip  = { x: sp.x + Math.cos(tipAngle) * tipLen,  y: sp.y + Math.sin(tipAngle) * tipLen  };
+  const bl   = { x: sp.x + Math.cos(perpAngle) * baseHalf,  y: sp.y + Math.sin(perpAngle) * baseHalf  };
+  const br   = { x: sp.x - Math.cos(perpAngle) * baseHalf,  y: sp.y - Math.sin(perpAngle) * baseHalf  };
+  ctx.beginPath();
+  ctx.moveTo(tip.x, tip.y);
+  ctx.lineTo(bl.x, bl.y);
+  ctx.lineTo(br.x, br.y);
+  ctx.closePath();
+  ctx.fillStyle   = 'rgba(40,100,210,0.9)';
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth   = 1.5;
+  ctx.fill();
+  ctx.stroke();
+
+  // Camera dot
+  ctx.beginPath();
+  ctx.arc(sp.x, sp.y, g * 0.35, 0, Math.PI * 2);
+  ctx.fillStyle   = '#2864d2';
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth   = 1.5;
+  ctx.fill();
+  ctx.stroke();
+}
+
+// ── FPS CAMERA ────────────────────────────────────────────
+const cam = { yaw: Math.PI / 4, pitch: -0.4, pos: new THREE.Vector3(8, 6, 8) };
+const keys = {};
+let spaceDown = false;
+
+function inputFocused() {
+  const el = document.activeElement;
+  return el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA');
+}
+
+function updateCamera() {
+  camera.position.copy(cam.pos);
+  camera.rotation.order = 'YXZ';
+  camera.rotation.y = cam.yaw;
+  camera.rotation.x = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 2 - 0.05, cam.pitch));
+}
+
+function updateCameraMovement(dt) {
+  const SPEED = 5;    // m/s
+  const TURN  = 1.5;  // rad/s
+  const fwd   = new THREE.Vector3(-Math.sin(cam.yaw) * Math.cos(cam.pitch), Math.sin(cam.pitch), -Math.cos(cam.yaw) * Math.cos(cam.pitch));
+  const right = new THREE.Vector3( Math.cos(cam.yaw), 0, -Math.sin(cam.yaw));
+
+  if (keys['KeyW']     || keys['ArrowUp'])    cam.pos.addScaledVector(fwd,    SPEED * dt);
+  if (keys['KeyS']     || keys['ArrowDown'])  cam.pos.addScaledVector(fwd,   -SPEED * dt);
+  if (keys['KeyA']     || keys['ArrowLeft'])  cam.pos.addScaledVector(right, -SPEED * dt);
+  if (keys['KeyD']     || keys['ArrowRight']) cam.pos.addScaledVector(right,  SPEED * dt);
+  if (keys['KeyX'])                           cam.pos.y += SPEED * dt;
+  if (keys['KeyZ'])                           cam.pos.y -= SPEED * dt;
+  if (keys['KeyQ'])                           cam.yaw   += TURN  * dt;
+  if (keys['KeyE'])                           cam.yaw   -= TURN  * dt;
+
+  cam.pos.y = Math.max(0.5, cam.pos.y);
+  updateCamera();
+}
+
+function setup3DControls() {
+  const el = renderer.domElement;
+  let rmb = false;
+  let spacePanActive = false;
+
+  el.addEventListener('mousedown', (e) => {
+    if (e.button === 2) { el.requestPointerLock(); e.preventDefault(); }
+    if (e.button === 0 && spaceDown) spacePanActive = true;
+  });
+
+  document.addEventListener('pointerlockchange', () => {
+    rmb = document.pointerLockElement === el;
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (rmb) {
+      cam.yaw   -= e.movementX * 0.003;
+      cam.pitch -= e.movementY * 0.003;
+      updateCamera();
+    }
+    if (spacePanActive && (e.buttons & 1)) {
+      const r = new THREE.Vector3(Math.cos(cam.yaw), 0, -Math.sin(cam.yaw));
+      cam.pos.addScaledVector(r, -e.movementX * 0.02);
+      cam.pos.y += e.movementY * 0.02;
+      updateCamera();
+    }
+  });
+
+  window.addEventListener('mouseup', (e) => {
+    if (e.button === 2) document.exitPointerLock();
+    if (e.button === 0) spacePanActive = false;
+  });
+  el.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  window.addEventListener('keydown', (e) => {
+    if (inputFocused()) return;
+    keys[e.code] = true;
+    if (e.code === 'Space') { spaceDown = true; e.preventDefault(); }
+    if (e.code.startsWith('Arrow')) e.preventDefault();
+  });
+  window.addEventListener('keyup', (e) => {
+    keys[e.code] = false;
+    if (e.code === 'Space') spaceDown = false;
+  });
 }
 
 // ── 3D SCENE ──────────────────────────────────────────────
-let renderer, scene, camera, orbitCtrl;
+let renderer, scene, camera;
 
 function addBox(cx, cy, cz, bw, bh, bd, mat) {
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), mat);
@@ -437,16 +576,11 @@ function init3D() {
   scene = new THREE.Scene();
   scene.fog = new THREE.Fog(0xf0ebe3, 25, 60);
 
-  camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
-  camera.position.set(8, 8, 8);
-  camera.lookAt(0, 0, 0);
-
-  orbitCtrl = new OrbitControls(camera, renderer.domElement);
-  orbitCtrl.enableDamping  = true;
-  orbitCtrl.dampingFactor  = 0.08;
-  orbitCtrl.minDistance    = 1;
-  orbitCtrl.maxDistance    = 50;
-  orbitCtrl.maxPolarAngle  = Math.PI / 2 - 0.02;
+  camera = new THREE.PerspectiveCamera(60, 1, 0.1, 200);
+  cam.pos.set(8, 6, 8);
+  cam.yaw   =  Math.PI / 4;
+  cam.pitch = -0.4;
+  updateCamera();
 
   scene.add(new THREE.AmbientLight(0xfff8f2, 0.55));
 
@@ -481,6 +615,7 @@ function init3D() {
   scene.add(grid);
 
   resize3D();
+  setup3DControls();
 }
 
 function rebuild3D() {
@@ -706,10 +841,12 @@ function resizeCanvas() {
 }
 
 // ── MAIN LOOP ──────────────────────────────────────────────
-let lastW3d = 0, lastH3d = 0;
+let lastW3d = 0, lastH3d = 0, lastTime = 0;
 
-function loop() {
+function loop(now) {
   requestAnimationFrame(loop);
+  const dt = Math.min((now - lastTime) / 1000, 0.1);
+  lastTime = now;
 
   const wrap = document.getElementById('canvas-wrap');
   if (wrap.clientWidth !== canvas2d.width || wrap.clientHeight !== canvas2d.height) resizeCanvas();
@@ -721,7 +858,11 @@ function loop() {
   }
 
   if (state.view !== '3d') draw2D();
-  if (renderer && state.view !== '2d') { rebuild3D(); orbitCtrl.update(); renderer.render(scene, camera); }
+  if (renderer && state.view !== '2d') {
+    rebuild3D();
+    if (!inputFocused()) updateCameraMovement(dt);
+    renderer.render(scene, camera);
+  }
 }
 
 // ── INIT ───────────────────────────────────────────────────
