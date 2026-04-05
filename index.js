@@ -602,6 +602,23 @@ function setup3DControls() {
   });
   el.addEventListener('contextmenu', (e) => e.preventDefault());
 
+  el.addEventListener('click', (e) => {
+    if (state.tool !== 'wall') return;
+    const gpt = raycastGroundGrid(e.clientX, e.clientY);
+    if (!gpt) return;
+    if (!state.wallStart) {
+      state.wallStart = { ...gpt };
+    } else {
+      const end = orthoEnd(state.wallStart, gpt);
+      if (end.x !== state.wallStart.x || end.y !== state.wallStart.y) {
+        state.walls.push({ id: state.nextWallId++, x1: state.wallStart.x, y1: state.wallStart.y, x2: end.x, y2: end.y });
+        state.wallStart = { ...end };
+        state.dirty3d   = true;
+      }
+    }
+    updateStatus();
+  });
+
   window.addEventListener('keydown', (e) => {
     if (inputFocused()) return;
     keys[e.code] = true;
@@ -847,6 +864,22 @@ function rebuild3D() {
     mesh.userData.dynamic = true;
     scene.add(mesh);
   }
+}
+
+function raycastGroundGrid(clientX, clientY) {
+  const rect    = renderer.domElement.getBoundingClientRect();
+  const ndcX    = ((clientX - rect.left)  / rect.width)  * 2 - 1;
+  const ndcY    = -((clientY - rect.top) / rect.height) * 2 + 1;
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
+  const ground  = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  const target  = new THREE.Vector3();
+  raycaster.ray.intersectPlane(ground, target);
+  if (!target) return null;
+  return {
+    x: Math.round(target.x / UNIT),
+    y: Math.round(target.z / UNIT),
+  };
 }
 
 function resize3D() {
