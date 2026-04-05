@@ -327,16 +327,12 @@ function draw2D() {
     ctx.setLineDash([]);
   }
 
-  // Gardens
-  ctx.fillStyle   = 'rgba(110,170,80,0.30)';
-  ctx.strokeStyle = 'rgba(80,140,60,0.60)';
-  ctx.lineWidth   = 1.5;
+  // Gardens (no stroke — adjacent patches blend seamlessly)
+  ctx.fillStyle = 'rgba(110,170,80,0.30)';
   for (const gd of state.gardens) {
     const p1 = gridToScreen(gd.x1, gd.y1);
     const p2 = gridToScreen(gd.x2, gd.y2);
-    ctx.beginPath();
-    ctx.rect(Math.min(p1.x,p2.x), Math.min(p1.y,p2.y), Math.abs(p2.x-p1.x), Math.abs(p2.y-p1.y));
-    ctx.fill(); ctx.stroke();
+    ctx.fillRect(Math.min(p1.x,p2.x), Math.min(p1.y,p2.y), Math.abs(p2.x-p1.x), Math.abs(p2.y-p1.y));
   }
 
   // Trees / bushes
