@@ -210,8 +210,27 @@ html, body {
 }
 
 .settings-panel.hidden,
-#opening-settings.hidden {
+#opening-settings.hidden,
+#paint-settings.hidden {
   display: none;
+}
+
+#paint-settings {
+  margin: 6px 6px 0;
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+}
+
+.setting-row input[type="color"] {
+  width: 36px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  background: none;
 }
 
 .setting-row {

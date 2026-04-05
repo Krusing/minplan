@@ -26,6 +26,10 @@
       </div>
       <div id="topbar-right">
         <span id="nav-hint">Scroll = zooma &nbsp;·&nbsp; Alt+dra = panorera &nbsp;·&nbsp; Högerklick = avbryt</span>
+        <button class="action-btn" id="btn-fullscreen">Fullskärm</button>
+        <button class="action-btn" id="btn-collision">Kollision</button>
+        <button class="action-btn" id="btn-fps-mode">FPS-läge</button>
+        <button class="action-btn" id="btn-center-camera">Centrera på kamera</button>
         <button class="action-btn danger" id="btn-clear">Rensa allt</button>
       </div>
     </header>
@@ -35,7 +39,15 @@
       <aside id="sidebar">
         <div class="section-label">Verktyg</div>
 
-        <button class="tool-btn active" data-tool="wall">
+        <button class="tool-btn active" data-tool="pan">
+          <svg class="tool-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10 3 L10 13 M10 3 L8 5 M10 3 L12 5"/>
+            <path d="M6 7 L6 13 Q6 17 10 17 Q14 17 14 13 L14 7 Q14 5.5 13 5.5 Q12 5.5 12 7 L12 6 Q12 4.5 11 4.5 Q10 4.5 10 6 L10 5 Q10 3.5 9 3.5 Q8 3.5 8 5 L8 7 Q8 5.5 7 5.5 Q6 5.5 6 7Z" fill="rgba(139,115,85,0.15)"/>
+          </svg>
+          Panorera
+        </button>
+
+        <button class="tool-btn" data-tool="wall">
           <svg class="tool-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
             <line x1="3" y1="10" x2="17" y2="10"/>
             <circle cx="3" cy="10" r="1.5" fill="currentColor" stroke="none"/>
@@ -51,6 +63,132 @@
           </svg>
           Radera
         </button>
+
+        <button class="tool-btn" data-tool="furniture">
+          <svg class="tool-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="7" width="14" height="8" rx="1" fill="rgba(180,140,90,0.3)"/>
+            <line x1="6" y1="7" x2="6" y2="15"/>
+            <line x1="14" y1="7" x2="14" y2="15"/>
+          </svg>
+          Rita möbel
+        </button>
+
+        <div id="furniture-settings" class="settings-panel hidden">
+          <div class="setting-row">
+            <span class="setting-label">Höjd</span>
+            <input type="number" id="furn-height" value="0.8" min="0.1" max="3.0" step="0.1">
+            <span class="setting-unit">m</span>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">Rotation</span>
+            <select id="furn-rotation" style="font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:4px;background:var(--surface);">
+              <option value="0">0°</option>
+              <option value="90">90°</option>
+              <option value="180">180°</option>
+              <option value="270">270°</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">Label</span>
+            <input type="text" id="furn-label" placeholder="t.ex. Soffa" style="width:68px;font-size:11px;padding:2px 5px;border:1px solid var(--border);border-radius:4px;background:var(--surface);">
+          </div>
+        </div>
+
+        <button class="tool-btn" data-tool="floor3d">
+          <svg class="tool-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="14" height="14" rx="1" fill="rgba(200,160,100,0.3)"/>
+          </svg>
+          Rita golv
+        </button>
+
+        <div id="floor3d-settings" class="settings-panel hidden">
+          <div class="setting-row">
+            <span class="setting-label">Färg</span>
+            <input type="color" id="floor3d-color" value="#c8a46e">
+          </div>
+        </div>
+
+        <button class="tool-btn" data-tool="paint">
+          <svg class="tool-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 16 L14 6 L16 4 L16 4 Q17.5 2.5 18 4 L16 6 L6 16 Z"/>
+            <path d="M3 17 Q2 19 4 18 Q5 18 5 17 Q5 16 4 16 Q3 16 3 17Z" fill="currentColor" stroke="none"/>
+          </svg>
+          Färga vägg
+        </button>
+
+        <div id="paint-settings" class="settings-panel hidden">
+          <div class="setting-row">
+            <span class="setting-label">Färg</span>
+            <input type="color" id="wall-color" value="#f5f0e8">
+          </div>
+        </div>
+
+        <button class="tool-btn" data-tool="stair">
+          <svg class="tool-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 17 L3 13 L7 13 L7 9 L11 9 L11 5 L15 5 L15 17 Z" fill="rgba(200,180,150,0.4)"/>
+          </svg>
+          Trappa
+        </button>
+
+        <div id="stair-settings" class="settings-panel hidden">
+          <div class="setting-row">
+            <span class="setting-label">Steg</span>
+            <input type="number" id="stair-steps" value="10" min="3" max="20" step="1">
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">Stegdjup</span>
+            <input type="number" id="stair-steplen" value="0.3" min="0.2" max="0.5" step="0.1">
+            <span class="setting-unit">m</span>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">Bredd</span>
+            <input type="number" id="stair-width" value="1.0" min="0.5" max="3.0" step="0.5">
+            <span class="setting-unit">m</span>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">Riktning</span>
+            <select id="stair-rotation" style="font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:4px;background:var(--surface);">
+              <option value="0">↑ Nord</option>
+              <option value="90">→ Öst</option>
+              <option value="180">↓ Syd</option>
+              <option value="270">← Väst</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="sidebar-sep"></div>
+        <div class="section-label">Utemiljö</div>
+
+        <button class="tool-btn" data-tool="garden">
+          <svg class="tool-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="14" height="14" rx="2"/>
+            <path d="M7 10 Q10 6 13 10 Q10 14 7 10Z" fill="rgba(110,170,80,0.5)" stroke="none"/>
+          </svg>
+          Trädgård
+        </button>
+
+        <button class="tool-btn" data-tool="tree">
+          <svg class="tool-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+            <circle cx="10" cy="8" r="5" fill="rgba(60,120,50,0.4)" stroke="rgba(40,90,30,0.9)"/>
+            <line x1="10" y1="13" x2="10" y2="18"/>
+          </svg>
+          Träd / Buske
+        </button>
+
+        <div id="tree-settings" class="settings-panel hidden">
+          <div class="setting-row">
+            <span class="setting-label">Typ</span>
+            <select id="tree-type" style="font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:4px;background:var(--surface);">
+              <option value="tree">Träd</option>
+              <option value="bush">Buske</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">Storlek</span>
+            <input type="number" id="tree-radius" value="1.0" min="0.5" max="4.0" step="0.5">
+            <span class="setting-unit">m</span>
+          </div>
+        </div>
 
         <div class="sidebar-sep"></div>
         <div class="section-label">Öppningar</div>
@@ -103,6 +241,15 @@
               <span class="setting-unit">m</span>
             </div>
           </div>
+        </div>
+
+        <div style="flex:1"></div>
+        <div class="sidebar-sep"></div>
+        <div class="section-label">Våningar</div>
+        <div id="floor-selector"></div>
+        <div style="display:flex;gap:4px;padding:4px 6px;">
+          <button class="action-btn" id="btn-add-floor" style="flex:1;padding:4px 6px;font-size:11px;">+ Våning</button>
+          <button class="action-btn danger" id="btn-del-floor" style="flex:1;padding:4px 6px;font-size:11px;">– Ta bort</button>
         </div>
 
       </aside>
