@@ -72,6 +72,27 @@ function orthoEnd(start, cursor) {
   return dx >= dy ? { x: cursor.x, y: start.y } : { x: start.x, y: cursor.y };
 }
 
+// Choose wall end based on Shift: free grid point or 45°-snapped
+function wallEnd(start, cursor) {
+  return shiftDown ? { ...cursor } : snap45End(start, cursor);
+}
+
+// Snap endpoint to nearest 45° from start, keeping grid points
+function snap45End(start, cursor) {
+  const dx = cursor.x - start.x;
+  const dy = cursor.y - start.y;
+  if (dx === 0 && dy === 0) return { ...cursor };
+  const angle   = Math.atan2(dy, dx);
+  const snap    = Math.round(angle / (Math.PI / 4)) * (Math.PI / 4);
+  const snapDx  = Math.cos(snap);
+  const snapDy  = Math.sin(snap);
+  const projLen = Math.round(Math.abs(dx * snapDx + dy * snapDy));
+  return {
+    x: start.x + Math.round(snapDx * projLen),
+    y: start.y + Math.round(snapDy * projLen),
+  };
+}
+
 function ptToSegDist(px, py, ax, ay, bx, by) {
   const dx = bx - ax, dy = by - ay;
   const lenSq = dx * dx + dy * dy;
@@ -461,7 +482,7 @@ function draw2D() {
 
   // Wall drawing preview
   if (state.tool === 'wall' && state.wallStart && state.hoverPt) {
-    const end     = orthoEnd(state.wallStart, state.hoverPt);
+    const end     = wallEnd(state.wallStart, state.hoverPt);
     const p1      = gridToScreen(state.wallStart.x, state.wallStart.y);
     const p2      = gridToScreen(end.x, end.y);
     const thick   = Math.max(3, g * 0.3);
@@ -488,7 +509,7 @@ function draw2D() {
 
   // Snap indicator (wall tool)
   if (state.tool === 'wall' && state.hoverPt) {
-    const snapPt = state.wallStart ? orthoEnd(state.wallStart, state.hoverPt) : state.hoverPt;
+    const snapPt = state.wallStart ? wallEnd(state.wallStart, state.hoverPt) : state.hoverPt;
     if (state.wallStart) {
       const sp1 = gridToScreen(state.wallStart.x, state.wallStart.y);
       ctx.fillStyle = '#8b7355';
@@ -567,6 +588,7 @@ function drawCameraIndicator() {
 const cam = { yaw: Math.PI / 4, pitch: -0.4, pos: new THREE.Vector3(8, 6, 8) };
 const keys = {};
 let spaceDown = false;
+let shiftDown = false;
 let fpsMode      = false;
 let collisionOn  = false;
 
@@ -657,7 +679,7 @@ function setup3DControls() {
     if (!state.wallStart) {
       state.wallStart = { ...gpt };
     } else {
-      const end = orthoEnd(state.wallStart, gpt);
+      const end = wallEnd(state.wallStart, gpt);
       if (end.x !== state.wallStart.x || end.y !== state.wallStart.y) {
         state.walls.push({ id: state.nextWallId++, x1: state.wallStart.x, y1: state.wallStart.y, x2: end.x, y2: end.y, floor: state.activeFloor });
         state.wallStart = { ...end };
@@ -669,6 +691,7 @@ function setup3DControls() {
   });
 
   window.addEventListener('keydown', (e) => {
+    if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') shiftDown = true;
     if (inputFocused()) return;
     keys[e.code] = true;
     if (e.code === 'Space') { spaceDown = true; e.preventDefault(); }
@@ -676,6 +699,7 @@ function setup3DControls() {
     if (e.code === 'Escape' && fpsMode) setFpsMode(false);
   });
   window.addEventListener('keyup', (e) => {
+    if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') shiftDown = false;
     keys[e.code] = false;
     if (e.code === 'Space') spaceDown = false;
   });
@@ -698,6 +722,20 @@ function buildWallMeshes(w, wallMat, yOff, wallH) {
   const dz      = (w.y2 - w.y1) * UNIT;
   const len     = Math.hypot(dx, dz);
   if (len < 0.001) return;
+
+  const isDiag  = Math.abs(dx) > 0.001 && Math.abs(dz) > 0.001;
+  if (isDiag) {
+    const cx    = (w.x1 + w.x2) / 2 * UNIT;
+    const cz    = (w.y1 + w.y2) / 2 * UNIT;
+    const mesh  = new THREE.Mesh(new THREE.BoxGeometry(len + WALL_T, wallH, WALL_T), wallMat);
+    mesh.position.set(cx, yOff + wallH / 2, cz);
+    mesh.rotation.y    = -Math.atan2(dz, dx);
+    mesh.castShadow    = true;
+    mesh.receiveShadow = true;
+    mesh.userData.dynamic = true;
+    scene.add(mesh);
+    return;
+  }
 
   const isH     = Math.abs(dz) < 0.001;
   const signX   = isH ? (w.x2 >= w.x1 ? 1 : -1) : 0;
@@ -1049,7 +1087,7 @@ canvas2d.addEventListener('mousedown', (e) => {
     if (!state.wallStart) {
       state.wallStart = { ...gpt };
     } else {
-      const end = orthoEnd(state.wallStart, gpt);
+      const end = wallEnd(state.wallStart, gpt);
       if (end.x !== state.wallStart.x || end.y !== state.wallStart.y) {
         state.walls.push({ id: state.nextWallId++, x1: state.wallStart.x, y1: state.wallStart.y, x2: end.x, y2: end.y, floor: state.activeFloor });
         state.wallStart = { ...end };
