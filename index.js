@@ -808,6 +808,15 @@ document.querySelectorAll('.view-btn').forEach(btn => {
   });
 });
 
+document.getElementById('btn-center-camera').addEventListener('click', () => {
+  const wrap = document.getElementById('canvas-wrap');
+  const gx = cam.pos.x / UNIT;
+  const gy = cam.pos.z / UNIT;
+  const g  = GRID * state.zoom;
+  state.panX = wrap.clientWidth  / 2 - gx * g;
+  state.panY = wrap.clientHeight / 2 - gy * g;
+});
+
 document.getElementById('btn-clear').addEventListener('click', () => {
   if (!confirm('Rensa alla väggar och öppningar?')) return;
   state.walls      = [];
