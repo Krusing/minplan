@@ -12,6 +12,7 @@ const state = {
   openings:       [],    // [{id, wallId, left, width, height, fromFloor, type}]
   gardens:        [],    // [{id, x1, y1, x2, y2}]
   trees:          [],    // [{id, x, y, radius, type}] type: 'tree'|'bush'
+  floors3d:       [],    // [{id, x1, y1, x2, y2, color}]
   nextWallId:     1,
   nextId:         1,
 
@@ -284,6 +285,33 @@ function draw2D() {
   for (let x = sx0; x <= sx1; x++) { if (x % 2 === 0) { const px = x * g + state.panX; ctx.moveTo(px, 0); ctx.lineTo(px, H); } }
   for (let y = sy0; y <= sy1; y++) { if (y % 2 === 0) { const py = y * g + state.panY; ctx.moveTo(0, py); ctx.lineTo(W, py); } }
   ctx.stroke();
+
+  // Floor surfaces
+  for (const fl of state.floors3d) {
+    const p1 = gridToScreen(fl.x1, fl.y1);
+    const p2 = gridToScreen(fl.x2, fl.y2);
+    ctx.fillStyle   = fl.color + '66'; // 40% alpha
+    ctx.strokeStyle = fl.color + 'aa';
+    ctx.lineWidth   = 1;
+    ctx.beginPath();
+    ctx.rect(Math.min(p1.x,p2.x), Math.min(p1.y,p2.y), Math.abs(p2.x-p1.x), Math.abs(p2.y-p1.y));
+    ctx.fill(); ctx.stroke();
+  }
+
+  // Floor placement preview
+  if (state.tool === 'floor3d' && state.rectStart && state.hoverPt) {
+    const p1 = gridToScreen(state.rectStart.x, state.rectStart.y);
+    const p2 = gridToScreen(state.hoverPt.x,   state.hoverPt.y);
+    const col = document.getElementById('floor3d-color').value;
+    ctx.fillStyle   = col + '44';
+    ctx.strokeStyle = col + '88';
+    ctx.lineWidth   = 1.5;
+    ctx.setLineDash([6, 3]);
+    ctx.beginPath();
+    ctx.rect(Math.min(p1.x,p2.x), Math.min(p1.y,p2.y), Math.abs(p2.x-p1.x), Math.abs(p2.y-p1.y));
+    ctx.fill(); ctx.stroke();
+    ctx.setLineDash([]);
+  }
 
   // Gardens
   ctx.fillStyle   = 'rgba(110,170,80,0.30)';
@@ -733,6 +761,21 @@ function rebuild3D() {
     }
   }
 
+  // Floor surfaces
+  for (const fl of state.floors3d) {
+    const w  = (fl.x2 - fl.x1) * UNIT;
+    const d  = (fl.y2 - fl.y1) * UNIT;
+    const cx = (fl.x1 + fl.x2) / 2 * UNIT;
+    const cz = (fl.y1 + fl.y2) / 2 * UNIT;
+    const mat  = new THREE.MeshLambertMaterial({ color: new THREE.Color(fl.color) });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(Math.abs(w), Math.abs(d)), mat);
+    mesh.rotation.x    = -Math.PI / 2;
+    mesh.position.set(cx, 0.002, cz);
+    mesh.receiveShadow    = true;
+    mesh.userData.dynamic = true;
+    scene.add(mesh);
+  }
+
   // Gardens
   const gardenMat = new THREE.MeshLambertMaterial({ color: 0x6aaa44, transparent: true, opacity: 0.7 });
   for (const gd of state.gardens) {
@@ -867,6 +910,19 @@ canvas2d.addEventListener('mousedown', (e) => {
     state.trees.push({ id: state.nextId++, x: gpt.x, y: gpt.y, radius, type });
     state.dirty3d = true;
 
+  } else if (state.tool === 'floor3d') {
+    if (!state.rectStart) {
+      state.rectStart = { ...gpt };
+    } else {
+      const s = state.rectStart, e = gpt;
+      if (s.x !== e.x || s.y !== e.y) {
+        const color = document.getElementById('floor3d-color').value;
+        state.floors3d.push({ id: state.nextId++, x1: Math.min(s.x,e.x), y1: Math.min(s.y,e.y), x2: Math.max(s.x,e.x), y2: Math.max(s.y,e.y), color });
+        state.dirty3d = true;
+      }
+      state.rectStart = null;
+    }
+
   } else if (state.tool === 'garden') {
     if (!state.rectStart) {
       state.rectStart = { ...gpt };
@@ -949,8 +1005,9 @@ document.querySelectorAll('[data-tool]').forEach(btn => {
     }
     document.getElementById('paint-settings').classList.toggle('hidden', tool !== 'paint');
     document.getElementById('tree-settings').classList.toggle('hidden', tool !== 'tree');
+    document.getElementById('floor3d-settings').classList.toggle('hidden', tool !== 'floor3d');
 
-    const cursors = { wall: 'crosshair', erase: 'default', door: 'default', window: 'default', paint: 'default', garden: 'crosshair', tree: 'crosshair' };
+    const cursors = { wall: 'crosshair', erase: 'default', door: 'default', window: 'default', paint: 'default', garden: 'crosshair', tree: 'crosshair', floor3d: 'crosshair', furniture: 'crosshair' };
     canvas2d.style.cursor = cursors[tool] ?? 'default';
 
     updateStatus();
@@ -1016,6 +1073,7 @@ document.getElementById('btn-clear').addEventListener('click', () => {
   state.openings   = [];
   state.gardens    = [];
   state.trees      = [];
+  state.floors3d   = [];
   state.wallStart  = null;
   state.rectStart  = null;
   state.dirty3d    = true;
@@ -1032,7 +1090,8 @@ function updateStatus() {
     window: 'Håll över en vägg och klicka för att placera fönster',
     paint:  'Klicka på en vägg för att applicera vald färg',
     garden: state.rectStart ? 'Klicka för att placera hörn 2  ·  Högerklicka = avbryt' : 'Klicka för att placera hörn 1',
-    tree:   'Klicka för att placera träd eller buske',
+    tree:    'Klicka för att placera träd eller buske',
+    floor3d: state.rectStart ? 'Klicka för att placera hörn 2  ·  Högerklicka = avbryt' : 'Klicka för att placera hörn 1',
   };
   document.getElementById('status').textContent = msgs[state.tool] ?? '';
 }
