@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MinPlan</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="app">
+
+    <header id="topbar">
+      <span id="logo">MinPlan</span>
+      <div id="view-toggle">
+        <button class="view-btn active" data-view="split">Split</button>
+        <button class="view-btn" data-view="2d">2D Plan</button>
+        <button class="view-btn" data-view="3d">3D Vy</button>
+      </div>
+      <div id="topbar-right">
+        <span id="nav-hint">Scroll = zooma &nbsp;·&nbsp; Alt+dra = panorera &nbsp;·&nbsp; Högerklick = avbryt</span>
+        <button class="action-btn danger" id="btn-clear">Rensa allt</button>
+      </div>
+    </header>
+
+    <div id="main">
+
+      <aside id="sidebar">
+        <div class="section-label">Verktyg</div>
+
+        <button class="tool-btn active" data-tool="wall">
+          <svg class="tool-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <line x1="3" y1="10" x2="17" y2="10"/>
+            <circle cx="3" cy="10" r="1.5" fill="currentColor" stroke="none"/>
+            <circle cx="17" cy="10" r="1.5" fill="currentColor" stroke="none"/>
+          </svg>
+          Rita vägg
+        </button>
+
+        <button class="tool-btn" data-tool="erase">
+          <svg class="tool-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 17l4-4 7-7-3-3-7 7-1 7z"/>
+            <line x1="11" y1="6" x2="14" y2="9"/>
+          </svg>
+          Radera
+        </button>
+      </aside>
+
+      <div id="canvas-wrap">
+        <canvas id="floor-plan"></canvas>
+        <div id="scale-info">1 ruta = 50 cm</div>
+        <div id="status">Klicka för att börja rita en vägg</div>
+      </div>
+
+      <div id="view-3d">
+        <div id="view-3d-label">3D-vy &nbsp;·&nbsp; dra för att rotera &nbsp;·&nbsp; scroll för att zooma</div>
+      </div>
+
+    </div>
+  </div>
+
+  <script type="module" src="index.js"></script>
+</body>
+</html>

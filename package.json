@@ -1,0 +1,8 @@
+{
+  "name": "minplan",
+  "version": "0.0.1",
+  "description": "Grid-based 3D house planning tool",
+  "scripts": {
+    "start": "npx serve ."
+  }
+}

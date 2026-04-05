@@ -1,0 +1,7 @@
+*
+!.gitignore
+!index.html
+!index.js
+!package.json
+!README.md
+!style.css
