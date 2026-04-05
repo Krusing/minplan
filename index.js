@@ -395,6 +395,9 @@ function drawCameraIndicator() {
 const cam = { yaw: Math.PI / 4, pitch: -0.4, pos: new THREE.Vector3(8, 6, 8) };
 const keys = {};
 let spaceDown = false;
+let fpsMode   = false;
+
+const EYE_HEIGHT = 1.65;
 
 function inputFocused() {
   const el = document.activeElement;
@@ -414,16 +417,27 @@ function updateCameraMovement(dt) {
   const fwd   = new THREE.Vector3(-Math.sin(cam.yaw) * Math.cos(cam.pitch), Math.sin(cam.pitch), -Math.cos(cam.yaw) * Math.cos(cam.pitch));
   const right = new THREE.Vector3( Math.cos(cam.yaw), 0, -Math.sin(cam.yaw));
 
-  if (keys['KeyW']     || keys['ArrowUp'])    cam.pos.addScaledVector(fwd,    SPEED * dt);
-  if (keys['KeyS']     || keys['ArrowDown'])  cam.pos.addScaledVector(fwd,   -SPEED * dt);
-  if (keys['KeyA']     || keys['ArrowLeft'])  cam.pos.addScaledVector(right, -SPEED * dt);
-  if (keys['KeyD']     || keys['ArrowRight']) cam.pos.addScaledVector(right,  SPEED * dt);
-  if (keys['KeyX'])                           cam.pos.y += SPEED * dt;
-  if (keys['KeyZ'])                           cam.pos.y -= SPEED * dt;
-  if (keys['KeyQ'])                           cam.yaw   += TURN  * dt;
-  if (keys['KeyE'])                           cam.yaw   -= TURN  * dt;
-
-  cam.pos.y = Math.max(0.5, cam.pos.y);
+  if (fpsMode) {
+    // Horizontal movement only in FPS mode
+    const fwdFlat = new THREE.Vector3(-Math.sin(cam.yaw), 0, -Math.cos(cam.yaw));
+    if (keys['KeyW'] || keys['ArrowUp'])    cam.pos.addScaledVector(fwdFlat,  SPEED * dt);
+    if (keys['KeyS'] || keys['ArrowDown'])  cam.pos.addScaledVector(fwdFlat, -SPEED * dt);
+    if (keys['KeyA'] || keys['ArrowLeft'])  cam.pos.addScaledVector(right,   -SPEED * dt);
+    if (keys['KeyD'] || keys['ArrowRight']) cam.pos.addScaledVector(right,    SPEED * dt);
+    if (keys['KeyQ'])                       cam.yaw += TURN * dt;
+    if (keys['KeyE'])                       cam.yaw -= TURN * dt;
+    cam.pos.y = EYE_HEIGHT;
+  } else {
+    if (keys['KeyW']     || keys['ArrowUp'])    cam.pos.addScaledVector(fwd,    SPEED * dt);
+    if (keys['KeyS']     || keys['ArrowDown'])  cam.pos.addScaledVector(fwd,   -SPEED * dt);
+    if (keys['KeyA']     || keys['ArrowLeft'])  cam.pos.addScaledVector(right, -SPEED * dt);
+    if (keys['KeyD']     || keys['ArrowRight']) cam.pos.addScaledVector(right,  SPEED * dt);
+    if (keys['KeyX'])                           cam.pos.y += SPEED * dt;
+    if (keys['KeyZ'])                           cam.pos.y -= SPEED * dt;
+    if (keys['KeyQ'])                           cam.yaw   += TURN  * dt;
+    if (keys['KeyE'])                           cam.yaw   -= TURN  * dt;
+    cam.pos.y = Math.max(0.5, cam.pos.y);
+  }
   updateCamera();
 }
 
@@ -466,6 +480,7 @@ function setup3DControls() {
     keys[e.code] = true;
     if (e.code === 'Space') { spaceDown = true; e.preventDefault(); }
     if (e.code.startsWith('Arrow')) e.preventDefault();
+    if (e.code === 'Escape' && fpsMode) setFpsMode(false);
   });
   window.addEventListener('keyup', (e) => {
     keys[e.code] = false;
@@ -819,6 +834,14 @@ document.querySelectorAll('.view-btn').forEach(btn => {
     setTimeout(() => { resize3D(); resizeCanvas(); }, 50);
   });
 });
+
+function setFpsMode(on) {
+  fpsMode = on;
+  if (on) cam.pos.y = EYE_HEIGHT;
+  document.getElementById('btn-fps-mode').classList.toggle('active', on);
+}
+
+document.getElementById('btn-fps-mode').addEventListener('click', () => setFpsMode(!fpsMode));
 
 document.getElementById('btn-center-camera').addEventListener('click', () => {
   const wrap = document.getElementById('canvas-wrap');
