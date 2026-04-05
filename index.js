@@ -395,7 +395,8 @@ function drawCameraIndicator() {
 const cam = { yaw: Math.PI / 4, pitch: -0.4, pos: new THREE.Vector3(8, 6, 8) };
 const keys = {};
 let spaceDown = false;
-let fpsMode   = false;
+let fpsMode      = false;
+let collisionOn  = false;
 
 const EYE_HEIGHT = 1.65;
 
@@ -438,6 +439,7 @@ function updateCameraMovement(dt) {
     if (keys['KeyE'])                           cam.yaw   -= TURN  * dt;
     cam.pos.y = Math.max(0.5, cam.pos.y);
   }
+  if (collisionOn) resolveCollision();
   updateCamera();
 }
 
@@ -833,6 +835,31 @@ document.querySelectorAll('.view-btn').forEach(btn => {
     document.getElementById('view-3d').style.display     = state.view !== '2d' ? 'block' : 'none';
     setTimeout(() => { resize3D(); resizeCanvas(); }, 50);
   });
+});
+
+function resolveCollision() {
+  const R = WALL_T / 2 + 0.15; // camera radius
+  const px = cam.pos.x, pz = cam.pos.z;
+  for (const w of state.walls) {
+    const ax = w.x1 * UNIT, az = w.y1 * UNIT;
+    const bx = w.x2 * UNIT, bz = w.y2 * UNIT;
+    const dx = bx - ax, dz = bz - az;
+    const lenSq = dx * dx + dz * dz;
+    if (lenSq < 0.001) continue;
+    const t = Math.max(0, Math.min(1, ((px - ax) * dx + (pz - az) * dz) / lenSq));
+    const nx = ax + t * dx - px;
+    const nz = az + t * dz - pz;
+    const dist = Math.hypot(nx, nz);
+    if (dist < R && dist > 0.001) {
+      cam.pos.x -= nx / dist * (R - dist);
+      cam.pos.z -= nz / dist * (R - dist);
+    }
+  }
+}
+
+document.getElementById('btn-collision').addEventListener('click', () => {
+  collisionOn = !collisionOn;
+  document.getElementById('btn-collision').classList.toggle('active', collisionOn);
 });
 
 function setFpsMode(on) {
