@@ -8,12 +8,14 @@ const UNIT   = 0.5;   // 1 grid unit = 0.5 meters
 
 // ── STATE ──────────────────────────────────────────────────
 const state = {
-  walls:          [],    // [{id, x1, y1, x2, y2}]
+  walls:          [],    // [{id, x1, y1, x2, y2, color}]
   openings:       [],    // [{id, wallId, left, width, height, fromFloor, type}]
+  gardens:        [],    // [{id, x1, y1, x2, y2}]
   nextWallId:     1,
   nextId:         1,
 
-  tool:           'wall', // wall | erase | door | window | paint
+  tool:           'wall', // wall | erase | door | window | paint | garden | tree | floor3d | furniture
+  rectStart:      null,  // {x,y} start for rectangle tools (garden/floor3d/furniture)
   wallStart:      null,   // {x,y} or null
   hoverPt:        null,
   hoverWall:      -1,     // wall index (erase/placement hover)
@@ -281,6 +283,32 @@ function draw2D() {
   for (let x = sx0; x <= sx1; x++) { if (x % 2 === 0) { const px = x * g + state.panX; ctx.moveTo(px, 0); ctx.lineTo(px, H); } }
   for (let y = sy0; y <= sy1; y++) { if (y % 2 === 0) { const py = y * g + state.panY; ctx.moveTo(0, py); ctx.lineTo(W, py); } }
   ctx.stroke();
+
+  // Gardens
+  ctx.fillStyle   = 'rgba(110,170,80,0.30)';
+  ctx.strokeStyle = 'rgba(80,140,60,0.60)';
+  ctx.lineWidth   = 1.5;
+  for (const gd of state.gardens) {
+    const p1 = gridToScreen(gd.x1, gd.y1);
+    const p2 = gridToScreen(gd.x2, gd.y2);
+    ctx.beginPath();
+    ctx.rect(Math.min(p1.x,p2.x), Math.min(p1.y,p2.y), Math.abs(p2.x-p1.x), Math.abs(p2.y-p1.y));
+    ctx.fill(); ctx.stroke();
+  }
+
+  // Garden placement preview
+  if ((state.tool === 'garden') && state.rectStart && state.hoverPt) {
+    const p1 = gridToScreen(state.rectStart.x, state.rectStart.y);
+    const p2 = gridToScreen(state.hoverPt.x,   state.hoverPt.y);
+    ctx.fillStyle   = 'rgba(110,170,80,0.18)';
+    ctx.strokeStyle = 'rgba(80,140,60,0.50)';
+    ctx.lineWidth   = 1.5;
+    ctx.setLineDash([6, 3]);
+    ctx.beginPath();
+    ctx.rect(Math.min(p1.x,p2.x), Math.min(p1.y,p2.y), Math.abs(p2.x-p1.x), Math.abs(p2.y-p1.y));
+    ctx.fill(); ctx.stroke();
+    ctx.setLineDash([]);
+  }
 
   // Walls (with opening gaps)
   for (let i = 0; i < state.walls.length; i++) {
@@ -647,6 +675,21 @@ function rebuild3D() {
     const wallMat = new THREE.MeshLambertMaterial({ color: w.color ? new THREE.Color(w.color) : 0xf5f0e8 });
     buildWallMeshes(w, wallMat);
   }
+
+  // Gardens
+  const gardenMat = new THREE.MeshLambertMaterial({ color: 0x6aaa44, transparent: true, opacity: 0.7 });
+  for (const gd of state.gardens) {
+    const w  = (gd.x2 - gd.x1) * UNIT;
+    const d  = (gd.y2 - gd.y1) * UNIT;
+    const cx = (gd.x1 + gd.x2) / 2 * UNIT;
+    const cz = (gd.y1 + gd.y2) / 2 * UNIT;
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(Math.abs(w), Math.abs(d)), gardenMat);
+    mesh.rotation.x    = -Math.PI / 2;
+    mesh.position.set(cx, 0.003, cz);
+    mesh.receiveShadow    = true;
+    mesh.userData.dynamic = true;
+    scene.add(mesh);
+  }
 }
 
 function resize3D() {
@@ -743,12 +786,34 @@ canvas2d.addEventListener('mousedown', (e) => {
       state.walls.splice(state.hoverWall, 1);
       state.hoverWall = -1;
       state.dirty3d   = true;
+    } else {
+      // Erase garden under cursor
+      for (let i = 0; i < state.gardens.length; i++) {
+        const gd = state.gardens[i];
+        if (gpt.x >= gd.x1 && gpt.x <= gd.x2 && gpt.y >= gd.y1 && gpt.y <= gd.y2) {
+          state.gardens.splice(i, 1);
+          state.dirty3d = true;
+          break;
+        }
+      }
     }
 
   } else if (state.tool === 'paint') {
     if (state.hoverWall >= 0) {
       state.walls[state.hoverWall].color = document.getElementById('wall-color').value;
       state.dirty3d = true;
+    }
+
+  } else if (state.tool === 'garden') {
+    if (!state.rectStart) {
+      state.rectStart = { ...gpt };
+    } else {
+      const s = state.rectStart, e = gpt;
+      if (s.x !== e.x || s.y !== e.y) {
+        state.gardens.push({ id: state.nextId++, x1: Math.min(s.x,e.x), y1: Math.min(s.y,e.y), x2: Math.max(s.x,e.x), y2: Math.max(s.y,e.y) });
+        state.dirty3d = true;
+      }
+      state.rectStart = null;
     }
 
   } else if (state.tool === 'door' || state.tool === 'window') {
@@ -774,7 +839,8 @@ canvas2d.addEventListener('mouseup',   (e) => { if (e.button === 1 || state.isPa
 canvas2d.addEventListener('mouseleave', ()  => { state.hoverPt = null; state.isPanning = false; state.openingPreview = null; });
 canvas2d.addEventListener('contextmenu', (e) => {
   e.preventDefault();
-  if (state.tool === 'wall') { state.wallStart = null; updateStatus(); }
+  if (state.tool === 'wall')   { state.wallStart = null; updateStatus(); }
+  if (state.rectStart !== null) { state.rectStart = null; }
 });
 canvas2d.addEventListener('dblclick', () => {
   if (state.tool === 'wall') { state.wallStart = null; updateStatus(); }
@@ -800,6 +866,7 @@ document.querySelectorAll('[data-tool]').forEach(btn => {
     const tool = btn.dataset.tool;
     state.tool      = tool;
     state.wallStart = null;
+    state.rectStart = null;
     state.openingPreview = null;
 
     document.querySelectorAll('[data-tool]').forEach(b => b.classList.remove('active'));
@@ -880,10 +947,12 @@ document.getElementById('btn-center-camera').addEventListener('click', () => {
 });
 
 document.getElementById('btn-clear').addEventListener('click', () => {
-  if (!confirm('Rensa alla väggar och öppningar?')) return;
+  if (!confirm('Rensa allt?')) return;
   state.walls      = [];
   state.openings   = [];
+  state.gardens    = [];
   state.wallStart  = null;
+  state.rectStart  = null;
   state.dirty3d    = true;
   updateStatus();
 });
@@ -897,6 +966,7 @@ function updateStatus() {
     door:   'Håll över en vägg och klicka för att placera dörröppning',
     window: 'Håll över en vägg och klicka för att placera fönster',
     paint:  'Klicka på en vägg för att applicera vald färg',
+    garden: state.rectStart ? 'Klicka för att placera hörn 2  ·  Högerklicka = avbryt' : 'Klicka för att placera hörn 1',
   };
   document.getElementById('status').textContent = msgs[state.tool] ?? '';
 }
