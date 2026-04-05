@@ -24,6 +24,7 @@ const state = {
   trees:          [],    // [{id, x, y, radius, type}] type: 'tree'|'bush'
   floors3d:       [],    // [{id, x1, y1, x2, y2, color}]
   furniture:      [],    // [{id, x1, y1, x2, y2, height, label, rotation}]
+  foundations:    [],    // [{id, x1, y1, x2, y2, height}]
   stairs:         [],    // [{id, x, y, rotation, steps, stepLen, width, floor}]
   floorDefs:      [{id: 0, name: 'BV', wallHeight: 2.6}], // floor definitions
   activeFloor:    0,     // index into floorDefs
@@ -320,6 +321,32 @@ function draw2D() {
   for (let x = sx0; x <= sx1; x++) { if (x % 2 === 0) { const px = x * g + state.panX; ctx.moveTo(px, 0); ctx.lineTo(px, H); } }
   for (let y = sy0; y <= sy1; y++) { if (y % 2 === 0) { const py = y * g + state.panY; ctx.moveTo(0, py); ctx.lineTo(W, py); } }
   ctx.stroke();
+
+  // Foundations
+  for (const fd of state.foundations) {
+    const p1 = gridToScreen(fd.x1, fd.y1);
+    const p2 = gridToScreen(fd.x2, fd.y2);
+    ctx.fillStyle   = 'rgba(160,140,110,0.40)';
+    ctx.strokeStyle = 'rgba(110,90,60,0.70)';
+    ctx.lineWidth   = 1.5;
+    ctx.beginPath();
+    ctx.rect(Math.min(p1.x,p2.x), Math.min(p1.y,p2.y), Math.abs(p2.x-p1.x), Math.abs(p2.y-p1.y));
+    ctx.fill(); ctx.stroke();
+  }
+
+  // Foundation placement preview
+  if (state.tool === 'foundation' && state.rectStart && state.hoverPt) {
+    const p1 = gridToScreen(state.rectStart.x, state.rectStart.y);
+    const p2 = gridToScreen(state.hoverPt.x,   state.hoverPt.y);
+    ctx.fillStyle   = 'rgba(160,140,110,0.20)';
+    ctx.strokeStyle = 'rgba(110,90,60,0.50)';
+    ctx.lineWidth   = 1.5;
+    ctx.setLineDash([6, 3]);
+    ctx.beginPath();
+    ctx.rect(Math.min(p1.x,p2.x), Math.min(p1.y,p2.y), Math.abs(p2.x-p1.x), Math.abs(p2.y-p1.y));
+    ctx.fill(); ctx.stroke();
+    ctx.setLineDash([]);
+  }
 
   // Floor surfaces
   for (const fl of state.floors3d) {
@@ -962,6 +989,22 @@ function rebuild3D() {
     }
   }
 
+  // Foundations
+  const foundMat = new THREE.MeshLambertMaterial({ color: 0xa08c6e });
+  for (const fd of state.foundations) {
+    const w   = Math.abs(fd.x2 - fd.x1) * UNIT;
+    const d   = Math.abs(fd.y2 - fd.y1) * UNIT;
+    const cx  = (fd.x1 + fd.x2) / 2 * UNIT;
+    const cz  = (fd.y1 + fd.y2) / 2 * UNIT;
+    const h   = fd.height;
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), foundMat);
+    mesh.position.set(cx, -h / 2, cz); // sits below y=0 (ground level)
+    mesh.castShadow    = true;
+    mesh.receiveShadow = true;
+    mesh.userData.dynamic = true;
+    scene.add(mesh);
+  }
+
   // Floor surfaces
   for (const fl of state.floors3d) {
     const w  = (fl.x2 - fl.x1) * UNIT;
@@ -1118,14 +1161,26 @@ canvas2d.addEventListener('mousedown', (e) => {
           break;
         }
       }
-      // Erase garden under cursor
+      // Erase garden or foundation under cursor
       if (!erasedStair) {
-        for (let i = 0; i < state.gardens.length; i++) {
-          const gd = state.gardens[i];
-          if (gpt.x >= gd.x1 && gpt.x <= gd.x2 && gpt.y >= gd.y1 && gpt.y <= gd.y2) {
-            state.gardens.splice(i, 1);
+        let erased = false;
+        for (let i = 0; i < state.foundations.length; i++) {
+          const fd = state.foundations[i];
+          if (gpt.x >= fd.x1 && gpt.x <= fd.x2 && gpt.y >= fd.y1 && gpt.y <= fd.y2) {
+            state.foundations.splice(i, 1);
             state.dirty3d = true;
+            erased = true;
             break;
+          }
+        }
+        if (!erased) {
+          for (let i = 0; i < state.gardens.length; i++) {
+            const gd = state.gardens[i];
+            if (gpt.x >= gd.x1 && gpt.x <= gd.x2 && gpt.y >= gd.y1 && gpt.y <= gd.y2) {
+              state.gardens.splice(i, 1);
+              state.dirty3d = true;
+              break;
+            }
           }
         }
       }
@@ -1161,6 +1216,19 @@ canvas2d.addEventListener('mousedown', (e) => {
         const label    = document.getElementById('furn-label').value.trim();
         const rotation = parseInt(document.getElementById('furn-rotation').value, 10);
         state.furniture.push({ id: state.nextId++, x1: Math.min(s.x,e.x), y1: Math.min(s.y,e.y), x2: Math.max(s.x,e.x), y2: Math.max(s.y,e.y), height, label, rotation });
+        state.dirty3d = true;
+      }
+      state.rectStart = null;
+    }
+
+  } else if (state.tool === 'foundation') {
+    if (!state.rectStart) {
+      state.rectStart = { ...gpt };
+    } else {
+      const s = state.rectStart, e = gpt;
+      if (s.x !== e.x || s.y !== e.y) {
+        const height = parseFloat(document.getElementById('foundation-height').value);
+        state.foundations.push({ id: state.nextId++, x1: Math.min(s.x,e.x), y1: Math.min(s.y,e.y), x2: Math.max(s.x,e.x), y2: Math.max(s.y,e.y), height });
         state.dirty3d = true;
       }
       state.rectStart = null;
@@ -1265,8 +1333,9 @@ document.querySelectorAll('[data-tool]').forEach(btn => {
     document.getElementById('floor3d-settings').classList.toggle('hidden', tool !== 'floor3d');
     document.getElementById('furniture-settings').classList.toggle('hidden', tool !== 'furniture');
     document.getElementById('stair-settings').classList.toggle('hidden', tool !== 'stair');
+    document.getElementById('foundation-settings').classList.toggle('hidden', tool !== 'foundation');
 
-    const cursors = { pan: 'grab', wall: 'crosshair', erase: 'default', door: 'default', window: 'default', paint: 'default', garden: 'crosshair', tree: 'crosshair', floor3d: 'crosshair', furniture: 'crosshair', stair: 'crosshair' };
+    const cursors = { pan: 'grab', wall: 'crosshair', erase: 'default', door: 'default', window: 'default', paint: 'default', foundation: 'crosshair', garden: 'crosshair', tree: 'crosshair', floor3d: 'crosshair', furniture: 'crosshair', stair: 'crosshair' };
     canvas2d.style.cursor = cursors[tool] ?? 'default';
 
     updateStatus();
@@ -1392,6 +1461,7 @@ document.getElementById('btn-clear').addEventListener('click', () => {
   state.floors3d   = [];
   state.furniture  = [];
   state.stairs      = [];
+  state.foundations = [];
   state.floorDefs   = [{ id: 0, name: 'BV', wallHeight: 2.6 }];
   state.activeFloor = 0;
   state.wallStart  = null;
@@ -1416,7 +1486,8 @@ function updateStatus() {
     tree:    'Klicka för att placera träd eller buske',
     floor3d:   state.rectStart ? 'Klicka för att placera hörn 2  ·  Högerklicka = avbryt' : 'Klicka för att placera hörn 1',
     furniture: state.rectStart ? 'Klicka för att placera hörn 2  ·  Högerklicka = avbryt' : 'Klicka för att placera hörn 1',
-    stair:     'Klicka för att placera trappa',
+    foundation: state.rectStart ? 'Klicka för att placera hörn 2  ·  Högerklicka = avbryt' : 'Klicka för att placera hörn 1',
+    stair:      'Klicka för att placera trappa',
   };
   document.getElementById('status').textContent = msgs[state.tool] ?? '';
 }
@@ -1439,6 +1510,7 @@ let   _saveTimer  = null;
 function saveSession() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      foundations: state.foundations,
       walls:       state.walls,
       openings:    state.openings,
       gardens:     state.gardens,
@@ -1465,6 +1537,7 @@ function loadSession() {
   let data;
   try { data = JSON.parse(localStorage.getItem(STORAGE_KEY)); } catch (_) {}
   if (!data) return;
+  if (data.foundations) state.foundations = data.foundations;
   if (data.walls)       state.walls       = data.walls;
   if (data.openings)    state.openings    = data.openings;
   if (data.gardens)     state.gardens     = data.gardens;
