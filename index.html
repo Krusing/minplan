@@ -114,6 +114,39 @@
           </div>
         </div>
 
+        <button class="tool-btn" data-tool="stair">
+          <svg class="tool-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 17 L3 13 L7 13 L7 9 L11 9 L11 5 L15 5 L15 17 Z" fill="rgba(200,180,150,0.4)"/>
+          </svg>
+          Trappa
+        </button>
+
+        <div id="stair-settings" class="settings-panel hidden">
+          <div class="setting-row">
+            <span class="setting-label">Steg</span>
+            <input type="number" id="stair-steps" value="10" min="3" max="20" step="1">
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">Stegdjup</span>
+            <input type="number" id="stair-steplen" value="0.3" min="0.2" max="0.5" step="0.1">
+            <span class="setting-unit">m</span>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">Bredd</span>
+            <input type="number" id="stair-width" value="1.0" min="0.5" max="3.0" step="0.5">
+            <span class="setting-unit">m</span>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">Riktning</span>
+            <select id="stair-rotation" style="font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:4px;background:var(--surface);">
+              <option value="0">↑ Nord</option>
+              <option value="90">→ Öst</option>
+              <option value="180">↓ Syd</option>
+              <option value="270">← Väst</option>
+            </select>
+          </div>
+        </div>
+
         <div class="sidebar-sep"></div>
         <div class="section-label">Utemiljö</div>
 
@@ -199,6 +232,15 @@
               <span class="setting-unit">m</span>
             </div>
           </div>
+        </div>
+
+        <div style="flex:1"></div>
+        <div class="sidebar-sep"></div>
+        <div class="section-label">Våningar</div>
+        <div id="floor-selector"></div>
+        <div style="display:flex;gap:4px;padding:4px 6px;">
+          <button class="action-btn" id="btn-add-floor" style="flex:1;padding:4px 6px;font-size:11px;">+ Våning</button>
+          <button class="action-btn danger" id="btn-del-floor" style="flex:1;padding:4px 6px;font-size:11px;">– Ta bort</button>
         </div>
 
       </aside>

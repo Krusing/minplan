@@ -1,19 +1,32 @@
 import * as THREE from 'three';
 
 // ── CONSTANTS ──────────────────────────────────────────────
-const GRID   = 24;    // pixels per grid unit
-const WALL_H = 2.6;   // wall height in meters (3D)
-const WALL_T = 0.15;  // wall thickness in meters (3D)
-const UNIT   = 0.5;   // 1 grid unit = 0.5 meters
+const GRID          = 24;    // pixels per grid unit
+const WALL_H        = 2.6;   // default wall height in meters (3D)
+const WALL_T        = 0.15;  // wall thickness in meters (3D)
+const UNIT          = 0.5;   // 1 grid unit = 0.5 meters
+const FLOOR_SLAB_H  = 0.2;   // thickness of the floor slab between storeys
+
+function floorYOffset(floorIdx) {
+  let y = 0;
+  for (let i = 0; i < floorIdx; i++) {
+    const fd = state.floorDefs[i];
+    y += (fd ? fd.wallHeight : WALL_H) + FLOOR_SLAB_H;
+  }
+  return y;
+}
 
 // ── STATE ──────────────────────────────────────────────────
 const state = {
-  walls:          [],    // [{id, x1, y1, x2, y2, color}]
+  walls:          [],    // [{id, x1, y1, x2, y2, color, floor}]
   openings:       [],    // [{id, wallId, left, width, height, fromFloor, type}]
   gardens:        [],    // [{id, x1, y1, x2, y2}]
   trees:          [],    // [{id, x, y, radius, type}] type: 'tree'|'bush'
   floors3d:       [],    // [{id, x1, y1, x2, y2, color}]
   furniture:      [],    // [{id, x1, y1, x2, y2, height, label, rotation}]
+  stairs:         [],    // [{id, x, y, rotation, steps, stepLen, width, floor}]
+  floorDefs:      [{id: 0, name: 'BV', wallHeight: 2.6}], // floor definitions
+  activeFloor:    0,     // index into floorDefs
   nextWallId:     1,
   nextId:         1,
 
@@ -407,9 +420,40 @@ function draw2D() {
     ctx.setLineDash([]);
   }
 
-  // Walls (with opening gaps)
+  // Walls for active floor (with opening gaps)
   for (let i = 0; i < state.walls.length; i++) {
-    drawWall(state.walls[i], i === state.hoverWall);
+    const w = state.walls[i];
+    if ((w.floor ?? 0) !== state.activeFloor) continue;
+    drawWall(w, i === state.hoverWall);
+  }
+
+  // Stairs
+  for (const st of state.stairs) {
+    if ((st.floor ?? 0) !== state.activeFloor) continue;
+    const sp     = gridToScreen(st.x, st.y);
+    const g      = GRID * state.zoom;
+    const wPx    = st.width  * g;
+    const lenPx  = st.steps * st.stepLen * g;
+    const angle  = (st.rotation || 0) * Math.PI / 180;
+    ctx.save();
+    ctx.translate(sp.x, sp.y);
+    ctx.rotate(angle);
+    ctx.strokeStyle = 'rgba(100,80,60,0.7)';
+    ctx.fillStyle   = 'rgba(200,180,150,0.35)';
+    ctx.lineWidth   = 1;
+    // Outline
+    ctx.beginPath(); ctx.rect(0, 0, wPx, lenPx); ctx.fill(); ctx.stroke();
+    // Step lines
+    for (let s = 1; s < st.steps; s++) {
+      const sy = s * st.stepLen * g;
+      ctx.beginPath(); ctx.moveTo(0, sy); ctx.lineTo(wPx, sy); ctx.stroke();
+    }
+    // Arrow showing direction
+    ctx.strokeStyle = 'rgba(80,60,40,0.6)';
+    ctx.beginPath(); ctx.moveTo(wPx / 2, lenPx * 0.1); ctx.lineTo(wPx / 2, lenPx * 0.8); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(wPx / 2, lenPx * 0.8); ctx.lineTo(wPx / 2 - 4, lenPx * 0.65); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(wPx / 2, lenPx * 0.8); ctx.lineTo(wPx / 2 + 4, lenPx * 0.65); ctx.stroke();
+    ctx.restore();
   }
 
   // Wall drawing preview
@@ -611,7 +655,7 @@ function setup3DControls() {
     } else {
       const end = orthoEnd(state.wallStart, gpt);
       if (end.x !== state.wallStart.x || end.y !== state.wallStart.y) {
-        state.walls.push({ id: state.nextWallId++, x1: state.wallStart.x, y1: state.wallStart.y, x2: end.x, y2: end.y });
+        state.walls.push({ id: state.nextWallId++, x1: state.wallStart.x, y1: state.wallStart.y, x2: end.x, y2: end.y, floor: state.activeFloor });
         state.wallStart = { ...end };
         state.dirty3d   = true;
       }
@@ -644,7 +688,7 @@ function addBox(cx, cy, cz, bw, bh, bd, mat) {
   scene.add(mesh);
 }
 
-function buildWallMeshes(w, wallMat) {
+function buildWallMeshes(w, wallMat, yOff, wallH) {
   const dx      = (w.x2 - w.x1) * UNIT;
   const dz      = (w.y2 - w.y1) * UNIT;
   const len     = Math.hypot(dx, dz);
@@ -660,55 +704,48 @@ function buildWallMeshes(w, wallMat) {
     .sort((a, b) => a.left - b.left);
 
   if (wallOpenings.length === 0) {
-    // Simple single box (with end caps for clean corners)
     const cx = (w.x1 + w.x2) / 2 * UNIT;
     const cz = (w.y1 + w.y2) / 2 * UNIT;
-    addBox(cx, WALL_H / 2, cz, isH ? len + WALL_T : WALL_T, WALL_H, isH ? WALL_T : len + WALL_T, wallMat);
+    addBox(cx, yOff + wallH / 2, cz, isH ? len + WALL_T : WALL_T, wallH, isH ? WALL_T : len + WALL_T, wallMat);
     return;
   }
 
-  // Build pieces around openings
-  // [{fromG, toG, yFrom, yTo}] — grid units along wall, meters for Y
   const pieces = [];
   let cursor = 0;
 
   for (const op of wallOpenings) {
     if (op.left > cursor)
-      pieces.push({ fromG: cursor, toG: op.left, yFrom: 0, yTo: WALL_H });
+      pieces.push({ fromG: cursor, toG: op.left, yFrom: 0, yTo: wallH });
 
-    // Sill (below window)
     if (op.fromFloor > 0)
       pieces.push({ fromG: op.left, toG: op.left + op.width, yFrom: 0, yTo: op.fromFloor * UNIT });
 
-    // Header (above opening)
     const topM = (op.fromFloor + op.height) * UNIT;
-    if (topM < WALL_H)
-      pieces.push({ fromG: op.left, toG: op.left + op.width, yFrom: topM, yTo: WALL_H });
+    if (topM < wallH)
+      pieces.push({ fromG: op.left, toG: op.left + op.width, yFrom: topM, yTo: wallH });
 
     cursor = op.left + op.width;
   }
   if (cursor < wallLen)
-    pieces.push({ fromG: cursor, toG: wallLen, yFrom: 0, yTo: WALL_H });
+    pieces.push({ fromG: cursor, toG: wallLen, yFrom: 0, yTo: wallH });
 
   for (const piece of pieces) {
-    const lenG = piece.toG - piece.fromG;
+    const lenG   = piece.toG - piece.fromG;
     const pieceH = piece.yTo - piece.yFrom;
     if (lenG < 0.001 || pieceH < 0.001) continue;
 
-    // Add end-cap padding on wall ends only
-    const fromG = piece.fromG === 0       ? piece.fromG - WALL_T / (2 * UNIT) : piece.fromG;
-    const toG   = piece.toG   >= wallLen  ? piece.toG   + WALL_T / (2 * UNIT) : piece.toG;
+    const fromG  = piece.fromG === 0      ? piece.fromG - WALL_T / (2 * UNIT) : piece.fromG;
+    const toG    = piece.toG   >= wallLen ? piece.toG   + WALL_T / (2 * UNIT) : piece.toG;
     const adjLen = (toG - fromG) * UNIT;
     const midG   = (fromG + toG) / 2;
 
     const cx = w.x1 * UNIT + signX * midG * UNIT;
     const cz = w.y1 * UNIT + signZ * midG * UNIT;
-    const cy = piece.yFrom + pieceH / 2;
+    const cy = yOff + piece.yFrom + pieceH / 2;
 
     addBox(cx, cy, cz, isH ? adjLen : WALL_T, pieceH, isH ? WALL_T : adjLen, wallMat);
   }
 
-  // Window glass planes
   const glassMat = new THREE.MeshLambertMaterial({ color: 0xadd8e6, transparent: true, opacity: 0.28 });
   for (const op of wallOpenings) {
     if (op.type !== 'window') continue;
@@ -717,7 +754,7 @@ function buildWallMeshes(w, wallMat) {
     const midG = op.left + op.width / 2;
     const cx   = w.x1 * UNIT + signX * midG * UNIT;
     const cz   = w.y1 * UNIT + signZ * midG * UNIT;
-    const cy   = op.fromFloor * UNIT + opH / 2;
+    const cy   = yOff + op.fromFloor * UNIT + opH / 2;
     addBox(cx, cy, cz, isH ? opW : 0.02, opH, isH ? 0.02 : opW, glassMat);
   }
 }
@@ -786,8 +823,47 @@ function rebuild3D() {
   }
 
   for (const w of state.walls) {
-    const wallMat = new THREE.MeshLambertMaterial({ color: w.color ? new THREE.Color(w.color) : 0xf5f0e8 });
-    buildWallMeshes(w, wallMat);
+    const floorIdx = w.floor ?? 0;
+    const fd       = state.floorDefs[floorIdx] ?? state.floorDefs[0];
+    const yOff     = floorYOffset(floorIdx);
+    const wallH    = fd.wallHeight;
+    const wallMat  = new THREE.MeshLambertMaterial({ color: w.color ? new THREE.Color(w.color) : 0xf5f0e8 });
+    buildWallMeshes(w, wallMat, yOff, wallH);
+  }
+
+  // Floor slabs between storeys
+  const slabMat = new THREE.MeshLambertMaterial({ color: 0xe8e0d4 });
+  for (let i = 1; i < state.floorDefs.length; i++) {
+    const y = floorYOffset(i);
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(60, FLOOR_SLAB_H, 60), slabMat);
+    slab.position.set(0, y - FLOOR_SLAB_H / 2, 0);
+    slab.receiveShadow    = true;
+    slab.userData.dynamic = true;
+    scene.add(slab);
+  }
+
+  // Stairs
+  const stairMat = new THREE.MeshLambertMaterial({ color: 0xd4c4a8 });
+  for (const st of state.stairs) {
+    const floorIdx = st.floor ?? 0;
+    const yOff     = floorYOffset(floorIdx);
+    const fd       = state.floorDefs[floorIdx] ?? state.floorDefs[0];
+    const totalH   = fd.wallHeight + FLOOR_SLAB_H;
+    const stepH    = totalH / st.steps;
+    const stepD    = st.stepLen * UNIT;
+    const stepW    = st.width   * UNIT;
+    const angle    = (st.rotation || 0) * Math.PI / 180;
+    const ox       = st.x * UNIT, oz = st.y * UNIT;
+    for (let i = 0; i < st.steps; i++) {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(stepW, stepH * (i + 1), stepD), stairMat);
+      mesh.position.set(0, yOff + stepH * (i + 1) / 2, (i + 0.5) * stepD);
+      const pivot = new THREE.Object3D();
+      pivot.position.set(ox, 0, oz);
+      pivot.rotation.y = -angle;
+      pivot.add(mesh);
+      pivot.userData.dynamic = true;
+      scene.add(pivot);
+    }
   }
 
   // Furniture
@@ -959,7 +1035,7 @@ canvas2d.addEventListener('mousedown', (e) => {
     } else {
       const end = orthoEnd(state.wallStart, gpt);
       if (end.x !== state.wallStart.x || end.y !== state.wallStart.y) {
-        state.walls.push({ id: state.nextWallId++, x1: state.wallStart.x, y1: state.wallStart.y, x2: end.x, y2: end.y });
+        state.walls.push({ id: state.nextWallId++, x1: state.wallStart.x, y1: state.wallStart.y, x2: end.x, y2: end.y, floor: state.activeFloor });
         state.wallStart = { ...end };
         state.dirty3d   = true;
       }
@@ -993,6 +1069,14 @@ canvas2d.addEventListener('mousedown', (e) => {
       state.walls[state.hoverWall].color = document.getElementById('wall-color').value;
       state.dirty3d = true;
     }
+
+  } else if (state.tool === 'stair') {
+    const steps   = parseInt(document.getElementById('stair-steps').value, 10);
+    const stepLen = parseFloat(document.getElementById('stair-steplen').value) * 2; // grid units
+    const width   = parseFloat(document.getElementById('stair-width').value)   * 2;
+    const rotation = parseInt(document.getElementById('stair-rotation').value, 10);
+    state.stairs.push({ id: state.nextId++, x: gpt.x, y: gpt.y, steps, stepLen, width, rotation, floor: state.activeFloor });
+    state.dirty3d = true;
 
   } else if (state.tool === 'tree') {
     const type   = document.getElementById('tree-type').value;
@@ -1112,8 +1196,9 @@ document.querySelectorAll('[data-tool]').forEach(btn => {
     document.getElementById('tree-settings').classList.toggle('hidden', tool !== 'tree');
     document.getElementById('floor3d-settings').classList.toggle('hidden', tool !== 'floor3d');
     document.getElementById('furniture-settings').classList.toggle('hidden', tool !== 'furniture');
+    document.getElementById('stair-settings').classList.toggle('hidden', tool !== 'stair');
 
-    const cursors = { wall: 'crosshair', erase: 'default', door: 'default', window: 'default', paint: 'default', garden: 'crosshair', tree: 'crosshair', floor3d: 'crosshair', furniture: 'crosshair' };
+    const cursors = { wall: 'crosshair', erase: 'default', door: 'default', window: 'default', paint: 'default', garden: 'crosshair', tree: 'crosshair', floor3d: 'crosshair', furniture: 'crosshair', stair: 'crosshair' };
     canvas2d.style.cursor = cursors[tool] ?? 'default';
 
     updateStatus();
@@ -1164,6 +1249,46 @@ function setFpsMode(on) {
 
 document.getElementById('btn-fps-mode').addEventListener('click', () => setFpsMode(!fpsMode));
 
+function renderFloorSelector() {
+  const el = document.getElementById('floor-selector');
+  el.innerHTML = '';
+  state.floorDefs.forEach((fd, i) => {
+    const btn = document.createElement('button');
+    btn.className = 'tool-btn' + (i === state.activeFloor ? ' active' : '');
+    btn.style.fontSize = '11px';
+    btn.textContent   = fd.name;
+    btn.title         = `Vägghöjd: ${fd.wallHeight} m`;
+    btn.addEventListener('click', () => {
+      state.activeFloor = i;
+      state.wallStart   = null;
+      renderFloorSelector();
+    });
+    el.appendChild(btn);
+  });
+}
+
+document.getElementById('btn-add-floor').addEventListener('click', () => {
+  const n  = state.floorDefs.length + 1;
+  state.floorDefs.push({ id: n - 1, name: n === 2 ? '1V' : `${n - 1}V`, wallHeight: 2.6 });
+  state.activeFloor = state.floorDefs.length - 1;
+  state.dirty3d     = true;
+  renderFloorSelector();
+});
+
+document.getElementById('btn-del-floor').addEventListener('click', () => {
+  if (state.floorDefs.length <= 1) return;
+  state.walls    = state.walls.filter(w => (w.floor ?? 0) !== state.activeFloor);
+  state.openings = state.openings.filter(op => {
+    const w = state.walls.find(w => w.id === op.wallId);
+    return !!w;
+  });
+  state.stairs = state.stairs.filter(s => (s.floor ?? 0) !== state.activeFloor);
+  state.floorDefs.splice(state.activeFloor, 1);
+  state.activeFloor = Math.max(0, state.activeFloor - 1);
+  state.dirty3d     = true;
+  renderFloorSelector();
+});
+
 document.getElementById('btn-center-camera').addEventListener('click', () => {
   const wrap = document.getElementById('canvas-wrap');
   const gx = cam.pos.x / UNIT;
@@ -1181,9 +1306,13 @@ document.getElementById('btn-clear').addEventListener('click', () => {
   state.trees      = [];
   state.floors3d   = [];
   state.furniture  = [];
+  state.stairs      = [];
+  state.floorDefs   = [{ id: 0, name: 'BV', wallHeight: 2.6 }];
+  state.activeFloor = 0;
   state.wallStart  = null;
   state.rectStart  = null;
   state.dirty3d    = true;
+  renderFloorSelector();
   updateStatus();
 });
 
@@ -1200,6 +1329,7 @@ function updateStatus() {
     tree:    'Klicka för att placera träd eller buske',
     floor3d:   state.rectStart ? 'Klicka för att placera hörn 2  ·  Högerklicka = avbryt' : 'Klicka för att placera hörn 1',
     furniture: state.rectStart ? 'Klicka för att placera hörn 2  ·  Högerklicka = avbryt' : 'Klicka för att placera hörn 1',
+    stair:     'Klicka för att placera trappa',
   };
   document.getElementById('status').textContent = msgs[state.tool] ?? '';
 }
@@ -1245,6 +1375,7 @@ function init() {
   resizeCanvas();
   init3D();
   updateStatus();
+  renderFloorSelector();
 
   // Always show one decimal in dimension inputs (e.g. "1.0" not "1")
   document.querySelectorAll('.setting-row input[type="number"]').forEach(input => {
