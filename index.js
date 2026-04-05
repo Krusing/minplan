@@ -618,7 +618,7 @@ function setup3DControls() {
   let spacePanActive = false;
 
   el.addEventListener('mousedown', (e) => {
-    if (e.button === 2) { el.requestPointerLock(); e.preventDefault(); }
+    if (e.button === 2) { el.requestPointerLock({ unadjustedMovement: true }); e.preventDefault(); }
     if (e.button === 0 && spaceDown) spacePanActive = true;
   });
 
@@ -1235,6 +1235,21 @@ function resolveCollision() {
     }
   }
 }
+
+// Fullscreen: pointer lock inside fullscreen avoids browser popup on most browsers (issue #12)
+document.getElementById('btn-fullscreen').addEventListener('click', () => {
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen().catch(() => {});
+    document.getElementById('btn-fullscreen').classList.add('active');
+  } else {
+    document.exitFullscreen();
+    document.getElementById('btn-fullscreen').classList.remove('active');
+  }
+});
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement)
+    document.getElementById('btn-fullscreen').classList.remove('active');
+});
 
 document.getElementById('btn-collision').addEventListener('click', () => {
   collisionOn = !collisionOn;
