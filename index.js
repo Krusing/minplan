@@ -1107,13 +1107,26 @@ canvas2d.addEventListener('mousedown', (e) => {
       state.hoverWall = -1;
       state.dirty3d   = true;
     } else {
-      // Erase garden under cursor
-      for (let i = 0; i < state.gardens.length; i++) {
-        const gd = state.gardens[i];
-        if (gpt.x >= gd.x1 && gpt.x <= gd.x2 && gpt.y >= gd.y1 && gpt.y <= gd.y2) {
-          state.gardens.splice(i, 1);
+      // Erase stair near cursor (within 2 grid units of origin)
+      let erasedStair = false;
+      for (let i = 0; i < state.stairs.length; i++) {
+        const st = state.stairs[i];
+        if (Math.hypot(gpt.x - st.x, gpt.y - st.y) <= 2) {
+          state.stairs.splice(i, 1);
           state.dirty3d = true;
+          erasedStair   = true;
           break;
+        }
+      }
+      // Erase garden under cursor
+      if (!erasedStair) {
+        for (let i = 0; i < state.gardens.length; i++) {
+          const gd = state.gardens[i];
+          if (gpt.x >= gd.x1 && gpt.x <= gd.x2 && gpt.y >= gd.y1 && gpt.y <= gd.y2) {
+            state.gardens.splice(i, 1);
+            state.dirty3d = true;
+            break;
+          }
         }
       }
     }
