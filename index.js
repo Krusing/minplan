@@ -339,11 +339,18 @@ function draw2D() {
   for (const t of state.trees) {
     const sp = gridToScreen(t.x, t.y);
     const r  = t.radius * GRID * state.zoom;
-    ctx.beginPath();
-    ctx.arc(sp.x, sp.y, r, 0, Math.PI * 2);
     ctx.fillStyle   = t.type === 'tree' ? 'rgba(60,120,50,0.55)' : 'rgba(90,150,60,0.45)';
     ctx.strokeStyle = t.type === 'tree' ? 'rgba(40,90,30,0.8)'   : 'rgba(60,120,40,0.7)';
     ctx.lineWidth   = 1;
+    if (t.type === 'bush-square') {
+      ctx.fillStyle   = 'rgba(90,150,60,0.45)';
+      ctx.strokeStyle = 'rgba(60,120,40,0.7)';
+      ctx.beginPath();
+      ctx.rect(sp.x - r, sp.y - r, r * 2, r * 2);
+    } else {
+      ctx.beginPath();
+      ctx.arc(sp.x, sp.y, r, 0, Math.PI * 2);
+    }
     ctx.fill();
     ctx.stroke();
   }
@@ -898,8 +905,16 @@ function rebuild3D() {
       canopy.position.set(cx, 1.2 + r * 0.7, cz);
       canopy.userData.dynamic = true;
       scene.add(canopy);
+    } else if (t.type === 'bush-square') {
+      // Square bush – low box
+      const bushMat = new THREE.MeshLambertMaterial({ color: 0x5a9a3c });
+      const side    = r * 2;
+      const bush    = new THREE.Mesh(new THREE.BoxGeometry(side, r * 1.2, side), bushMat);
+      bush.position.set(cx, r * 0.6, cz);
+      bush.userData.dynamic = true;
+      scene.add(bush);
     } else {
-      // Bush – low sphere
+      // Round bush – low sphere
       const bushMat = new THREE.MeshLambertMaterial({ color: 0x5a9a3c });
       const bush    = new THREE.Mesh(new THREE.SphereGeometry(r, 8, 5), bushMat);
       bush.scale.y = 0.6;
