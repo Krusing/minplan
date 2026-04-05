@@ -610,6 +610,7 @@ function updateCameraMovement(dt) {
   }
   if (collisionOn) resolveCollision();
   updateCamera();
+  scheduleSave();
 }
 
 function setup3DControls() {
@@ -661,6 +662,7 @@ function setup3DControls() {
       }
     }
     updateStatus();
+    scheduleSave();
   });
 
   window.addEventListener('keydown', (e) => {
@@ -1141,6 +1143,7 @@ canvas2d.addEventListener('mousedown', (e) => {
   }
 
   updateStatus();
+  scheduleSave();
 });
 
 canvas2d.addEventListener('mouseup',   (e) => { if (e.button === 1 || state.isPanning) state.isPanning = false; });
@@ -1288,6 +1291,7 @@ document.getElementById('btn-add-floor').addEventListener('click', () => {
   state.activeFloor = state.floorDefs.length - 1;
   state.dirty3d     = true;
   renderFloorSelector();
+  scheduleSave();
 });
 
 document.getElementById('btn-del-floor').addEventListener('click', () => {
@@ -1302,6 +1306,7 @@ document.getElementById('btn-del-floor').addEventListener('click', () => {
   state.activeFloor = Math.max(0, state.activeFloor - 1);
   state.dirty3d     = true;
   renderFloorSelector();
+  scheduleSave();
 });
 
 document.getElementById('btn-center-camera').addEventListener('click', () => {
@@ -1329,6 +1334,7 @@ document.getElementById('btn-clear').addEventListener('click', () => {
   state.dirty3d    = true;
   renderFloorSelector();
   updateStatus();
+  scheduleSave();
 });
 
 function updateStatus() {
@@ -1360,6 +1366,64 @@ function resizeCanvas() {
   if (first) { state.panX = w / 2 - 10 * GRID; state.panY = h / 2 - 8 * GRID; }
 }
 
+// ── LOCALSTORAGE ───────────────────────────────────────────
+const STORAGE_KEY = 'minplan_v1';
+let   _saveTimer  = null;
+
+function saveSession() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      walls:       state.walls,
+      openings:    state.openings,
+      gardens:     state.gardens,
+      trees:       state.trees,
+      floors3d:    state.floors3d,
+      furniture:   state.furniture,
+      stairs:      state.stairs,
+      floorDefs:   state.floorDefs,
+      activeFloor: state.activeFloor,
+      nextWallId:  state.nextWallId,
+      nextId:      state.nextId,
+      cam:  { x: cam.pos.x, y: cam.pos.y, z: cam.pos.z, yaw: cam.yaw, pitch: cam.pitch },
+      view: state.view,
+    }));
+  } catch (_) {}
+}
+
+function scheduleSave() {
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(saveSession, 600);
+}
+
+function loadSession() {
+  let data;
+  try { data = JSON.parse(localStorage.getItem(STORAGE_KEY)); } catch (_) {}
+  if (!data) return;
+  if (data.walls)       state.walls       = data.walls;
+  if (data.openings)    state.openings    = data.openings;
+  if (data.gardens)     state.gardens     = data.gardens;
+  if (data.trees)       state.trees       = data.trees;
+  if (data.floors3d)    state.floors3d    = data.floors3d;
+  if (data.furniture)   state.furniture   = data.furniture;
+  if (data.stairs)      state.stairs      = data.stairs;
+  if (data.floorDefs)   state.floorDefs   = data.floorDefs;
+  if (data.activeFloor !== undefined) state.activeFloor = data.activeFloor;
+  if (data.nextWallId)  state.nextWallId  = data.nextWallId;
+  if (data.nextId)      state.nextId      = data.nextId;
+  if (data.cam) {
+    cam.pos.set(data.cam.x, data.cam.y, data.cam.z);
+    cam.yaw   = data.cam.yaw;
+    cam.pitch = data.cam.pitch;
+  }
+  if (data.view) {
+    state.view = data.view;
+    document.querySelectorAll('.view-btn').forEach(b => b.classList.toggle('active', b.dataset.view === state.view));
+    document.getElementById('canvas-wrap').style.display = state.view !== '3d' ? 'block' : 'none';
+    document.getElementById('view-3d').style.display     = state.view !== '2d' ? 'block' : 'none';
+  }
+  state.dirty3d = true;
+}
+
 // ── MAIN LOOP ──────────────────────────────────────────────
 let lastW3d = 0, lastH3d = 0, lastTime = 0;
 
@@ -1388,7 +1452,9 @@ function loop(now) {
 // ── INIT ───────────────────────────────────────────────────
 function init() {
   resizeCanvas();
+  loadSession();
   init3D();
+  updateCameraMovement(0); // apply restored cam
   updateStatus();
   renderFloorSelector();
 
