@@ -1847,15 +1847,25 @@ canvas2d.addEventListener('mousedown', (e) => {
     } else {
       polyAddPoint(gpt, () => {
         const color = document.getElementById('floor3d-color').value;
-        const newPts = [...state.polyPts];
-        // Remove any existing floor whose centroid lies inside the new polygon
-        state.floors3d = state.floors3d.filter(fl => {
-          if (!fl.rings?.[0] || (fl.floor ?? 0) !== state.activeFloor) return true;
-          const cx = fl.rings[0].reduce((s, p) => s + p.x, 0) / fl.rings[0].length;
-          const cy = fl.rings[0].reduce((s, p) => s + p.y, 0) / fl.rings[0].length;
-          return !pointInPoly(cx, cy, newPts);
-        });
+        const newPts  = [...state.polyPts];
+        const newClip = [newPts.map(p => [p.x, p.y])];
+        // Subtract new polygon from any different-color floor on the same level
+        const out = [];
+        for (const fl of state.floors3d) {
+          if (!fl.rings?.[0] || (fl.floor ?? 0) !== state.activeFloor || fl.color === color) {
+            out.push(fl); continue;
+          }
+          const result = polygonClipping.difference(toClipPoly(fl.rings), newClip);
+          let first = true;
+          for (const poly of result) {
+            out.push({ ...fl, id: first ? fl.id : state.nextId++, rings: fromClipPoly(poly) });
+            first = false;
+          }
+          // result empty → existing floor fully covered by new one, remove it
+        }
+        state.floors3d = out;
         state.floors3d.push({ id: state.nextId++, rings: [newPts], color, floor: state.activeFloor });
+        // Merge same-color adjacent/overlapping floors
         state.floors3d = tryMergeCollection(state.floors3d,
           (a, b) => (a.floor ?? 0) === (b.floor ?? 0) && a.color === b.color);
         addToRecent(color, floorRecent); refreshFloorPalette();
