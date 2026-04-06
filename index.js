@@ -67,12 +67,6 @@ function gridToScreen(gx, gy) {
   return { x: gx * g + state.panX, y: gy * g + state.panY };
 }
 
-function orthoEnd(start, cursor) {
-  const dx = Math.abs(cursor.x - start.x);
-  const dy = Math.abs(cursor.y - start.y);
-  return dx >= dy ? { x: cursor.x, y: start.y } : { x: start.x, y: cursor.y };
-}
-
 // Choose wall end based on Shift: free grid point or 45°-snapped
 function wallEnd(start, cursor) {
   return shiftDown ? { ...cursor } : snap45End(start, cursor);
@@ -845,9 +839,6 @@ function init3D() {
   scene.fog = new THREE.Fog(0xf0ebe3, 25, 60);
 
   camera = new THREE.PerspectiveCamera(60, 1, 0.1, 200);
-  cam.pos.set(8, 6, 8);
-  cam.yaw   =  Math.PI / 4;
-  cam.pitch = -0.4;
   updateCamera();
 
   scene.add(new THREE.AmbientLight(0xfff8f2, 0.55));
