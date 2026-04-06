@@ -18,11 +18,12 @@ function floorYOffset(floorIdx) {
 
 // ── STATE ──────────────────────────────────────────────────
 const state = {
-  walls:          [],    // [{id, x1, y1, x2, y2, color, floor}]
+  walls:          [],    // [{id, x1, y1, x2, y2, colorFront, colorBack, floor}]
   openings:       [],    // [{id, wallId, left, width, height, fromFloor, type}]
   gardens:        [],    // [{id, x1, y1, x2, y2}]
   trees:          [],    // [{id, x, y, radius, type}] type: 'tree'|'bush'
   floors3d:       [],    // [{id, x1, y1, x2, y2, color}]
+  fillFloors:     [],    // [{id, cells:[{x,y}], color, floor}]
   furniture:      [],    // [{id, x1, y1, x2, y2, height, label, rotation}]
   foundations:    [],    // [{id, x1, y1, x2, y2, height}]
   stairs:         [],    // [{id, x, y, rotation, steps, stepLen, width, floor}]
@@ -85,26 +86,86 @@ function addWall(x1, y1, x2, y2, floor, color) {
   state.walls.push({ id: state.nextWallId++, x1, y1, x2, y2, floor, color });
 }
 
-// Choose wall end based on Shift: free grid point or 45°-snapped
+// ── FLOOD FILL ─────────────────────────────────────────────
+function cross2d(ax, ay, bx, by) { return ax * by - ay * bx; }
+
+function segsIntersect(ax, ay, bx, by, cx, cy, dx, dy) {
+  const d1 = cross2d(dx-cx, dy-cy, ax-cx, ay-cy);
+  const d2 = cross2d(dx-cx, dy-cy, bx-cx, by-cy);
+  const d3 = cross2d(bx-ax, by-ay, cx-ax, cy-ay);
+  const d4 = cross2d(bx-ax, by-ay, dx-ax, dy-ay);
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+         ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
+
+// Is the edge between grid cell (cx,cy) and neighbour (nx,ny) blocked by a wall?
+function edgeBlocked(cx, cy, nx, ny, floor) {
+  // Boundary edge endpoints
+  let ex1, ey1, ex2, ey2;
+  if (nx === cx + 1) { ex1 = cx+1; ey1 = cy;   ex2 = cx+1; ey2 = cy+1; }
+  else if (nx === cx - 1) { ex1 = cx; ey1 = cy;   ex2 = cx;   ey2 = cy+1; }
+  else if (ny === cy + 1) { ex1 = cx; ey1 = cy+1; ex2 = cx+1; ey2 = cy+1; }
+  else                    { ex1 = cx; ey1 = cy;   ex2 = cx+1; ey2 = cy;   }
+  for (const w of state.walls) {
+    if ((w.floor ?? 0) !== floor) continue;
+    if (segsIntersect(w.x1, w.y1, w.x2, w.y2, ex1, ey1, ex2, ey2)) return true;
+  }
+  return false;
+}
+
+function floodFillCells(startX, startY, floor) {
+  // BFS from the cell that contains (startX, startY)
+  const cx0 = Math.floor(startX), cy0 = Math.floor(startY);
+  // Bounds: walls bbox + margin
+  let minX = cx0 - 1, maxX = cx0 + 1, minY = cy0 - 1, maxY = cy0 + 1;
+  for (const w of state.walls) {
+    if ((w.floor ?? 0) !== floor) continue;
+    minX = Math.min(minX, w.x1, w.x2) - 1;
+    maxX = Math.max(maxX, w.x1, w.x2) + 1;
+    minY = Math.min(minY, w.y1, w.y2) - 1;
+    maxY = Math.max(maxY, w.y1, w.y2) + 1;
+  }
+  // Safety cap
+  if (maxX - minX > 300 || maxY - minY > 300) return null;
+
+  const visited = new Set();
+  const key = (x, y) => `${x},${y}`;
+  const queue = [[cx0, cy0]];
+  visited.add(key(cx0, cy0));
+  const cells = [];
+
+  while (queue.length) {
+    const [cx, cy] = queue.shift();
+    if (cx < minX || cx > maxX || cy < minY || cy > maxY) return null; // leaked outside
+    cells.push({ x: cx, y: cy });
+    for (const [nx, ny] of [[cx+1,cy],[cx-1,cy],[cx,cy+1],[cx,cy-1]]) {
+      const k = key(nx, ny);
+      if (visited.has(k)) continue;
+      if (edgeBlocked(cx, cy, nx, ny, floor)) continue;
+      visited.add(k);
+      queue.push([nx, ny]);
+    }
+  }
+  return cells;
+}
+
+// Which side of wall w is point (px, py) on?
+// Returns 'front' (left of direction) or 'back' (right of direction)
+function wallSide(w, px, py) {
+  const dx = w.x2 - w.x1, dy = w.y2 - w.y1;
+  const cx = (w.x1 + w.x2) / 2, cy = (w.y1 + w.y2) / 2;
+  return cross2d(dx, dy, px - cx, py - cy) >= 0 ? 'front' : 'back';
+}
+
+// Free angle by default; Shift = ortho snap (0°/90°)
 function wallEnd(start, cursor) {
-  return shiftDown ? { ...cursor } : snap45End(start, cursor);
+  if (!shiftDown) return { ...cursor };
+  const dx = Math.abs(cursor.x - start.x);
+  const dy = Math.abs(cursor.y - start.y);
+  return dx >= dy ? { x: cursor.x, y: start.y } : { x: start.x, y: cursor.y };
 }
 
 // Snap endpoint to nearest 45° from start, keeping grid points
-function snap45End(start, cursor) {
-  const dx = cursor.x - start.x;
-  const dy = cursor.y - start.y;
-  if (dx === 0 && dy === 0) return { ...cursor };
-  const angle   = Math.atan2(dy, dx);
-  const snap    = Math.round(angle / (Math.PI / 4)) * (Math.PI / 4);
-  const snapDx  = Math.cos(snap);
-  const snapDy  = Math.sin(snap);
-  const projLen = Math.round(Math.abs(dx * snapDx + dy * snapDy));
-  return {
-    x: start.x + Math.round(snapDx * projLen),
-    y: start.y + Math.round(snapDy * projLen),
-  };
-}
 
 function ptToSegDist(px, py, ax, ay, bx, by) {
   const dx = bx - ax, dy = by - ay;
@@ -204,16 +265,45 @@ function drawWall(w, isHov) {
   }
   if (cursor < wallLen) segments.push({ from: cursor, to: wallLen });
 
-  ctx.lineCap     = 'round';
-  ctx.strokeStyle = isHov ? '#c04040' : (w.color || '#4a3f35');
-  ctx.lineWidth   = isHov ? thick + 2 : thick;
+  ctx.lineCap   = 'round';
+  ctx.lineWidth = isHov ? thick + 2 : thick;
+
+  // Normal perpendicular to wall (for color stripe offset)
+  const wdx = p2.x - p1.x, wdy = p2.y - p1.y;
+  const wlen = Math.hypot(wdx, wdy) || 1;
+  const nx = -wdy / wlen, ny = wdx / wlen; // points to "front" side
+  const stripeOff = thick * 0.35;
 
   for (const seg of segments) {
     const t1 = seg.from / wallLen, t2 = seg.to / wallLen;
-    ctx.beginPath();
-    ctx.moveTo(p1.x + t1 * (p2.x - p1.x), p1.y + t1 * (p2.y - p1.y));
-    ctx.lineTo(p1.x + t2 * (p2.x - p1.x), p1.y + t2 * (p2.y - p1.y));
-    ctx.stroke();
+    const sx1 = p1.x + t1 * (p2.x - p1.x), sy1 = p1.y + t1 * (p2.y - p1.y);
+    const sx2 = p1.x + t2 * (p2.x - p1.x), sy2 = p1.y + t2 * (p2.y - p1.y);
+
+    // Wall body
+    ctx.strokeStyle = isHov ? '#c04040' : '#4a3f35';
+    ctx.beginPath(); ctx.moveTo(sx1, sy1); ctx.lineTo(sx2, sy2); ctx.stroke();
+
+    // Color stripes
+    if (!isHov) {
+      if (w.colorFront) {
+        ctx.strokeStyle = w.colorFront;
+        ctx.lineWidth   = Math.max(2, thick * 0.28);
+        ctx.beginPath();
+        ctx.moveTo(sx1 + nx * stripeOff, sy1 + ny * stripeOff);
+        ctx.lineTo(sx2 + nx * stripeOff, sy2 + ny * stripeOff);
+        ctx.stroke();
+        ctx.lineWidth = isHov ? thick + 2 : thick;
+      }
+      if (w.colorBack) {
+        ctx.strokeStyle = w.colorBack;
+        ctx.lineWidth   = Math.max(2, thick * 0.28);
+        ctx.beginPath();
+        ctx.moveTo(sx1 - nx * stripeOff, sy1 - ny * stripeOff);
+        ctx.lineTo(sx2 - nx * stripeOff, sy2 - ny * stripeOff);
+        ctx.stroke();
+        ctx.lineWidth = isHov ? thick + 2 : thick;
+      }
+    }
   }
 
   // Opening symbols
@@ -385,6 +475,19 @@ function draw2D() {
     ctx.rect(Math.min(p1.x,p2.x), Math.min(p1.y,p2.y), Math.abs(p2.x-p1.x), Math.abs(p2.y-p1.y));
     ctx.fill(); ctx.stroke();
     ctx.setLineDash([]);
+  }
+
+  // Fill-floors (flood-filled cells)
+  {
+    const g = GRID * state.zoom;
+    for (const ff of state.fillFloors) {
+      if ((ff.floor ?? 0) !== state.activeFloor) continue;
+      ctx.fillStyle = ff.color + '66';
+      for (const c of ff.cells) {
+        const sp = gridToScreen(c.x, c.y);
+        ctx.fillRect(sp.x, sp.y, g, g);
+      }
+    }
   }
 
   // Gardens (no stroke — adjacent patches blend seamlessly)
@@ -851,6 +954,27 @@ function buildWallMeshes(w, wallMat, yOff, wallH) {
     const cy   = yOff + op.fromFloor * UNIT + opH / 2;
     addBox(cx, cy, cz, isH ? opW : 0.02, opH, isH ? 0.02 : opW, glassMat);
   }
+
+  // Two-sided color planes
+  const wallDirX = (w.x2 - w.x1) * UNIT, wallDirZ = (w.y2 - w.y1) * UNIT;
+  const wallLen3  = Math.hypot(wallDirX, wallDirZ);
+  const angle3    = Math.atan2(wallDirX, wallDirZ);
+  const wCx       = (w.x1 + w.x2) / 2 * UNIT;
+  const wCz       = (w.y1 + w.y2) / 2 * UNIT;
+  const PAINT_OFF = WALL_T / 2 + 0.01;
+  for (const [color, sign] of [[w.colorFront, 1], [w.colorBack, -1]]) {
+    if (!color) continue;
+    const mat   = new THREE.MeshBasicMaterial({ color: new THREE.Color(color), side: THREE.FrontSide });
+    const plane = new THREE.Mesh(new THREE.PlaneGeometry(wallLen3, wallH), mat);
+    plane.position.set(
+      wCx + sign * Math.cos(angle3) * PAINT_OFF,
+      yOff + wallH / 2,
+      wCz - sign * Math.sin(angle3) * PAINT_OFF
+    );
+    plane.rotation.y   = angle3 + (sign > 0 ? 0 : Math.PI);
+    plane.userData.dynamic = true;
+    scene.add(plane);
+  }
 }
 
 function init3D() {
@@ -1024,6 +1148,20 @@ function rebuild3D() {
     mesh.receiveShadow = true;
     mesh.userData.dynamic = true;
     scene.add(mesh);
+  }
+
+  // Fill-floors
+  for (const ff of state.fillFloors) {
+    const yOff = floorYOffset(ff.floor ?? 0);
+    const mat  = new THREE.MeshLambertMaterial({ color: new THREE.Color(ff.color) });
+    for (const c of ff.cells) {
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(UNIT, UNIT), mat);
+      mesh.rotation.x    = -Math.PI / 2;
+      mesh.position.set((c.x + 0.5) * UNIT, yOff + 0.003, (c.y + 0.5) * UNIT);
+      mesh.receiveShadow    = true;
+      mesh.userData.dynamic = true;
+      scene.add(mesh);
+    }
   }
 
   // Floor surfaces
@@ -1208,8 +1346,23 @@ canvas2d.addEventListener('mousedown', (e) => {
     }
 
   } else if (state.tool === 'paint') {
-    if (state.hoverWall >= 0) {
-      state.walls[state.hoverWall].color = document.getElementById('wall-color').value;
+    const color = document.getElementById('wall-color').value;
+    if (shiftDown) {
+      // Flood-fill: color all walls bounding the clicked region on the facing side
+      const cells = floodFillCells(gpt.x - 0.5, gpt.y - 0.5, state.activeFloor);
+      if (cells) {
+        for (const w of state.walls) {
+          if ((w.floor ?? 0) !== state.activeFloor) continue;
+          const side = wallSide(w, gpt.x, gpt.y);
+          if (side === 'front' && !w.colorFront) { w.colorFront = color; state.dirty3d = true; }
+          else if (side === 'back' && !w.colorBack) { w.colorBack = color; state.dirty3d = true; }
+        }
+      }
+    } else if (state.hoverWall >= 0) {
+      const w    = state.walls[state.hoverWall];
+      const side = wallSide(w, gpt.x, gpt.y);
+      if (side === 'front') w.colorFront = color;
+      else                  w.colorBack  = color;
       state.dirty3d = true;
     }
 
@@ -1256,7 +1409,24 @@ canvas2d.addEventListener('mousedown', (e) => {
     }
 
   } else if (state.tool === 'floor3d') {
-    if (!state.rectStart) {
+    if (shiftDown) {
+      // Flood-fill floor
+      const color = document.getElementById('floor3d-color').value;
+      const cells = floodFillCells(gpt.x - 0.5, gpt.y - 0.5, state.activeFloor);
+      if (cells) {
+        // Don't paint cells already covered by a fillFloor
+        const covered = new Set();
+        for (const ff of state.fillFloors) {
+          if ((ff.floor ?? 0) !== state.activeFloor) continue;
+          for (const c of ff.cells) covered.add(`${c.x},${c.y}`);
+        }
+        const newCells = cells.filter(c => !covered.has(`${c.x},${c.y}`));
+        if (newCells.length) {
+          state.fillFloors.push({ id: state.nextId++, cells: newCells, color, floor: state.activeFloor });
+          state.dirty3d = true;
+        }
+      }
+    } else if (!state.rectStart) {
       state.rectStart = { ...gpt };
     } else {
       const s = state.rectStart, e = gpt;
@@ -1480,6 +1650,7 @@ document.getElementById('btn-clear').addEventListener('click', () => {
   state.gardens    = [];
   state.trees      = [];
   state.floors3d   = [];
+  state.fillFloors = [];
   state.furniture  = [];
   state.stairs      = [];
   state.foundations = [];
@@ -1503,10 +1674,10 @@ function updateStatus() {
     erase:  'Klicka på en vägg eller öppning för att ta bort den',
     door:   'Håll över en vägg och klicka för att placera dörröppning',
     window: 'Håll över en vägg och klicka för att placera fönster',
-    paint:  'Klicka på en vägg för att applicera vald färg',
+    paint:  'Klicka på vägg = färga sida  ·  Shift+klick = fyll alla väggar i slutet område',
     garden: state.rectStart ? 'Klicka för att placera hörn 2  ·  Högerklicka = avbryt' : 'Klicka för att placera hörn 1',
     tree:    'Klicka för att placera träd eller buske',
-    floor3d:   state.rectStart ? 'Klicka för att placera hörn 2  ·  Högerklicka = avbryt' : 'Klicka för att placera hörn 1',
+    floor3d:   state.rectStart ? 'Klicka för att placera hörn 2  ·  Högerklicka = avbryt' : 'Klicka = rita rektangel  ·  Shift+klick = fyll slutet område',
     furniture: state.rectStart ? 'Klicka för att placera hörn 2  ·  Högerklicka = avbryt' : 'Klicka för att placera hörn 1',
     foundation: state.rectStart ? 'Klicka för att placera hörn 2  ·  Högerklicka = avbryt' : 'Klicka för att placera hörn 1',
     stair:      'Klicka för att placera trappa',
@@ -1538,6 +1709,7 @@ function saveSession() {
       gardens:     state.gardens,
       trees:       state.trees,
       floors3d:    state.floors3d,
+      fillFloors:  state.fillFloors,
       furniture:   state.furniture,
       stairs:      state.stairs,
       floorDefs:   state.floorDefs,
@@ -1560,11 +1732,18 @@ function loadSession() {
   try { data = JSON.parse(localStorage.getItem(STORAGE_KEY)); } catch (_) {}
   if (!data) return;
   if (data.foundations) state.foundations = data.foundations;
-  if (data.walls)       state.walls       = data.walls;
+  if (data.walls) {
+    state.walls = data.walls.map(w => {
+      // migrate old single 'color' field to colorFront
+      if (w.color && !w.colorFront) { w.colorFront = w.color; delete w.color; }
+      return w;
+    });
+  }
   if (data.openings)    state.openings    = data.openings;
   if (data.gardens)     state.gardens     = data.gardens;
   if (data.trees)       state.trees       = data.trees;
   if (data.floors3d)    state.floors3d    = data.floors3d;
+  if (data.fillFloors)  state.fillFloors  = data.fillFloors;
   if (data.furniture)   state.furniture   = data.furniture;
   if (data.stairs)      state.stairs      = data.stairs;
   if (data.floorDefs)   state.floorDefs   = data.floorDefs;
