@@ -34,6 +34,7 @@ const state = {
   nextId:         1,
 
   tool:           'pan',  // pan | wall | erase | door | window | paint | garden | tree | floor3d | furniture
+  hoverWall3d:    null,   // {wallId, side} — highlighted wall face in 3D paint mode
   rectStart:      null,  // {x,y} start for rectangle tools (furniture/foundation)
   polyPts:        [],    // [{x,y}] polygon in progress (wall/erase/floor3d/garden/foundation)
   wallStart:      null,   // {x,y} or null (wall draw tool)
@@ -1329,7 +1330,57 @@ function setup3DControls() {
     saveSession();
   }, { passive: false });
 
+  // Raycast against wall meshes, returns {wallId, side, mesh} or null
+  function raycastWall(clientX, clientY) {
+    const rect = el.getBoundingClientRect();
+    const ndcX = ((clientX - rect.left) / rect.width)  * 2 - 1;
+    const ndcY = -((clientY - rect.top)  / rect.height) * 2 + 1;
+    const rc = new THREE.Raycaster();
+    rc.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
+    const hits = rc.intersectObjects(scene.children.filter(o => o.userData.wallId));
+    if (!hits.length) return null;
+    const hit = hits[0];
+    const mesh = hit.object;
+    const wallId = mesh.userData.wallId;
+    const w = state.walls.find(w => w.id === wallId);
+    if (!w) return null;
+    // Determine side from hit face normal in world space
+    const normal = hit.face.normal.clone().transformDirection(mesh.matrixWorld);
+    const isH = Math.abs((w.y2 - w.y1)) < 0.001;
+    // front normal direction: left of travel
+    // travel (signX, signZ), front normal = (-signZ, signX)
+    const signX = isH ? (w.x2 >= w.x1 ? 1 : -1) : 0;
+    const signZ = isH ? 0 : (w.y2 >= w.y1 ? 1 : -1);
+    const fnx = -signZ, fnz = signX;
+    const dot = normal.x * fnx + normal.z * fnz;
+    const side = dot >= 0 ? 'front' : 'back';
+    return { wallId, side, w };
+  }
+
+  el.addEventListener('mousemove', (e) => {
+    if (state.tool !== 'paint') { state.hoverWall3d = null; return; }
+    const hit = raycastWall(e.clientX, e.clientY);
+    state.hoverWall3d = hit ? { wallId: hit.wallId, side: hit.side } : null;
+  });
+
   el.addEventListener('click', (e) => {
+    if (state.tool === 'paint') {
+      const hit = raycastWall(e.clientX, e.clientY);
+      if (!hit) return;
+      const color = document.getElementById('wall-color').value;
+      const w = hit.w;
+      if (wallRemoveMode) {
+        if (hit.side === 'front') w.colorFront = null;
+        else                      w.colorBack  = null;
+      } else {
+        if (hit.side === 'front') w.colorFront = color;
+        else                      w.colorBack  = color;
+        addToRecent(color, wallRecent); refreshWallPalette();
+      }
+      state.dirty3d = true;
+      scheduleSave();
+      return;
+    }
     if (state.tool !== 'wall') return;
     const gpt = raycastGroundGrid(e.clientX, e.clientY);
     if (!gpt) return;
@@ -1380,6 +1431,16 @@ function addBox(cx, cy, cz, bw, bh, bd, mat) {
   scene.add(mesh);
 }
 
+function addWallBox(cx, cy, cz, bw, bh, bd, mat, wallId) {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), mat);
+  mesh.position.set(cx, cy, cz);
+  mesh.castShadow = true; mesh.receiveShadow = true;
+  mesh.userData.dynamic = true;
+  mesh.userData.wallId  = wallId;
+  scene.add(mesh);
+  return mesh;
+}
+
 function buildWallMeshes(w, wallMat, yOff, wallH) {
   const dx      = (w.x2 - w.x1) * UNIT;
   const dz      = (w.y2 - w.y1) * UNIT;
@@ -1393,9 +1454,8 @@ function buildWallMeshes(w, wallMat, yOff, wallH) {
     const mesh  = new THREE.Mesh(new THREE.BoxGeometry(len + WALL_T, wallH, WALL_T), wallMat);
     mesh.position.set(cx, yOff + wallH / 2, cz);
     mesh.rotation.y    = -Math.atan2(dz, dx);
-    mesh.castShadow    = true;
-    mesh.receiveShadow = true;
-    mesh.userData.dynamic = true;
+    mesh.castShadow    = true; mesh.receiveShadow = true;
+    mesh.userData.dynamic = true; mesh.userData.wallId = w.id;
     scene.add(mesh);
     return;
   }
@@ -1409,10 +1469,25 @@ function buildWallMeshes(w, wallMat, yOff, wallH) {
     .filter(op => op.wallId === w.id)
     .sort((a, b) => a.left - b.left);
 
+  // Miter: check if a perpendicular wall meets at each endpoint.
+  // If so, the current wall yields WALL_T/2 at that end (the other wall covers the corner).
+  function hasPerpAt(px, py) {
+    return state.walls.some(o => {
+      if (o.id === w.id || (o.floor ?? 0) !== (w.floor ?? 0)) return false;
+      const oIsH = Math.abs(o.y2 - o.y1) < 0.001;
+      if (oIsH === isH) return false; // same direction → not perpendicular
+      return (o.x1 === px && o.y1 === py) || (o.x2 === px && o.y2 === py);
+    });
+  }
+  const miterStart = hasPerpAt(w.x1, w.y1) ? WALL_T / 2 : 0;
+  const miterEnd   = hasPerpAt(w.x2, w.y2) ? WALL_T / 2 : 0;
+  const adjLen     = len - miterStart - miterEnd;
+  if (adjLen < 0.001) return;
+
   if (wallOpenings.length === 0) {
-    const cx = (w.x1 + w.x2) / 2 * UNIT;
-    const cz = (w.y1 + w.y2) / 2 * UNIT;
-    addBox(cx, yOff + wallH / 2, cz, isH ? len + WALL_T : WALL_T, wallH, isH ? WALL_T : len + WALL_T, wallMat);
+    const cx = (w.x1 + w.x2) / 2 * UNIT + (miterStart - miterEnd) / 2 * (isH ? signX : 0);
+    const cz = (w.y1 + w.y2) / 2 * UNIT + (miterStart - miterEnd) / 2 * (isH ? 0 : signZ);
+    addWallBox(cx, yOff + wallH / 2, cz, isH ? adjLen : WALL_T, wallH, isH ? WALL_T : adjLen, wallMat, w.id);
     return;
   }
 
@@ -1449,7 +1524,7 @@ function buildWallMeshes(w, wallMat, yOff, wallH) {
     const cz = w.y1 * UNIT + signZ * midG * UNIT;
     const cy = yOff + piece.yFrom + pieceH / 2;
 
-    addBox(cx, cy, cz, isH ? adjLen : WALL_T, pieceH, isH ? WALL_T : adjLen, wallMat);
+    addWallBox(cx, cy, cz, isH ? adjLen : WALL_T, pieceH, isH ? WALL_T : adjLen, wallMat, w.id);
   }
 
   const glassMat = new THREE.MeshLambertMaterial({ color: 0xadd8e6, transparent: true, opacity: 0.28 });
@@ -1464,23 +1539,25 @@ function buildWallMeshes(w, wallMat, yOff, wallH) {
     addBox(cx, cy, cz, isH ? opW : 0.02, opH, isH ? 0.02 : opW, glassMat);
   }
 
-  // Two-sided color planes
-  const wallDirX = (w.x2 - w.x1) * UNIT, wallDirZ = (w.y2 - w.y1) * UNIT;
-  const wallLen3  = Math.hypot(wallDirX, wallDirZ);
-  const angle3    = Math.atan2(wallDirX, wallDirZ);
-  const wCx       = (w.x1 + w.x2) / 2 * UNIT;
-  const wCz       = (w.y1 + w.y2) / 2 * UNIT;
-  const PAINT_OFF = WALL_T / 2 + 0.01;
-  for (const [color, sign] of [[w.colorFront, 1], [w.colorBack, -1]]) {
+  // Color planes — one per painted side, offset slightly from wall face
+  // Wall runs along X (isH) or Z (!isH).
+  // "front" = left of travel direction = negative Z (isH) or positive X (!isH)
+  const wallLen3 = len;
+  const wCx = (w.x1 + w.x2) / 2 * UNIT;
+  const wCz = (w.y1 + w.y2) / 2 * UNIT;
+  const PAINT_OFF = WALL_T / 2 + 0.005;
+  // front normal: perpendicular left of wall direction
+  // wall dir: (signX, 0, signZ) → left normal: (-signZ, 0, signX)
+  const fnx = -signZ, fnz = signX; // front normal in XZ
+  for (const [color, side] of [[w.colorFront, 'front'], [w.colorBack, 'back']]) {
     if (!color) continue;
-    const mat   = new THREE.MeshBasicMaterial({ color: new THREE.Color(color), side: THREE.FrontSide });
+    const s   = side === 'front' ? 1 : -1;
+    const nx  = fnx * s, nz = fnz * s;
+    const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(color), side: THREE.FrontSide });
     const plane = new THREE.Mesh(new THREE.PlaneGeometry(wallLen3, wallH), mat);
-    plane.position.set(
-      wCx + sign * Math.cos(angle3) * PAINT_OFF,
-      yOff + wallH / 2,
-      wCz - sign * Math.sin(angle3) * PAINT_OFF
-    );
-    plane.rotation.y   = angle3 + (sign > 0 ? 0 : Math.PI);
+    plane.position.set(wCx + nx * PAINT_OFF, yOff + wallH / 2, wCz + nz * PAINT_OFF);
+    // Face the plane outward: rotation around Y
+    plane.rotation.y = Math.atan2(nx, nz) + (side === 'back' ? Math.PI : 0);
     plane.userData.dynamic = true;
     scene.add(plane);
   }
@@ -1844,8 +1921,7 @@ canvas2d.addEventListener('mousemove', (e) => {
   } else if (state.tool === 'pan') {
     canvas2d.style.cursor = 'grab';
   } else if (state.tool === 'paint') {
-    state.hoverWall    = wallHit(mx, my);
-    canvas2d.style.cursor = state.hoverWall >= 0 ? 'pointer' : 'default';
+    canvas2d.style.cursor = 'default';
   } else {
     state.hoverWall       = -1;
     state.hoverOpening    = null;
@@ -1922,37 +1998,6 @@ canvas2d.addEventListener('mousedown', (e) => {
         state.polyPts.push({ ...end });
         updateStatus();
       }
-    }
-
-  } else if (state.tool === 'paint') {
-    const color = document.getElementById('wall-color').value;
-    if (wallRemoveMode) {
-      if (state.hoverWall >= 0) {
-        const w    = state.walls[state.hoverWall];
-        const side = wallSide(w, gpt.x, gpt.y);
-        if (side === 'front') w.colorFront = null;
-        else                  w.colorBack  = null;
-        state.dirty3d = true;
-      }
-    } else if (shiftDown) {
-      // Flood-fill: color all walls bounding the clicked region on the facing side
-      const cells = floodFillCells(gpt.x - 0.5, gpt.y - 0.5, state.activeFloor);
-      if (cells) {
-        for (const w of state.walls) {
-          if ((w.floor ?? 0) !== state.activeFloor) continue;
-          const side = wallSide(w, gpt.x, gpt.y);
-          if (side === 'front' && !w.colorFront) { w.colorFront = color; state.dirty3d = true; }
-          else if (side === 'back' && !w.colorBack) { w.colorBack = color; state.dirty3d = true; }
-        }
-        addToRecent(color, wallRecent); refreshWallPalette();
-      }
-    } else if (state.hoverWall >= 0) {
-      const w    = state.walls[state.hoverWall];
-      const side = wallSide(w, gpt.x, gpt.y);
-      if (side === 'front') w.colorFront = color;
-      else                  w.colorBack  = color;
-      state.dirty3d = true;
-      addToRecent(color, wallRecent); refreshWallPalette();
     }
 
   } else if (state.tool === 'stair') {
@@ -2483,6 +2528,15 @@ function loop(now) {
   if (renderer && state.view !== '2d') {
     rebuild3D();
     if (!inputFocused()) updateCameraMovement(dt);
+    // Paint hover: highlight hovered wall face
+    scene.children.forEach(o => {
+      if (!o.userData.wallId) return;
+      const h = state.hoverWall3d;
+      const isHov = h && o.userData.wallId === h.wallId;
+      if (o.material?.emissive) {
+        o.material.emissive.set(isHov ? 0x332200 : 0x000000);
+      }
+    });
     renderer.render(scene, camera);
   }
 }
