@@ -348,6 +348,13 @@ function eraseAreaPolygon(erasePts, activeFloor) {
   const keptWallIds = new Set(newWalls.map(w => w.id));
   state.openings = state.openings.filter(op => !removedWallIds.has(op.wallId) && keptWallIds.has(op.wallId));
 
+  // Also erase walls collinear with polygon edges (pointInPoly misses boundary)
+  const n = erasePts.length;
+  for (let i = 0; i < n; i++) {
+    const a = erasePts[i], b = erasePts[(i + 1) % n];
+    eraseWallSegment(a.x, a.y, b.x, b.y, activeFloor);
+  }
+
   // Point objects inside polygon
   state.trees     = state.trees.filter(t  => !pointInPoly(t.x, t.y, erasePts));
   state.furniture = state.furniture.filter(f => !pointInPoly((f.x1+f.x2)/2, (f.y1+f.y2)/2, erasePts));
