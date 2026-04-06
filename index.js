@@ -307,16 +307,46 @@ function eraseAreaPolygon(erasePts, activeFloor) {
   state.floors3d = subtractPolyFromCollection(state.floors3d, erasePts, activeFloor);
   state.gardens  = subtractPolyFromCollection(state.gardens,  erasePts, null);
 
-  // Walls: remove any wall whose midpoint lies inside the polygon
-  state.walls = state.walls.filter(w => {
-    if ((w.floor ?? 0) !== activeFloor) return true;
-    const mx = (w.x1 + w.x2) / 2, my = (w.y1 + w.y2) / 2;
-    return !pointInPoly(mx, my, erasePts);
-  });
+  // Walls: clip each wall to the part(s) lying OUTSIDE the erase polygon
+  const newWalls = [];
+  const removedWallIds = new Set();
+  for (const w of state.walls) {
+    if ((w.floor ?? 0) !== activeFloor) { newWalls.push(w); continue; }
+    const dx = w.x2 - w.x1, dy = w.y2 - w.y1;
+    const lenSq = dx * dx + dy * dy;
+    if (lenSq < 0.0001) continue;
+    // Collect all t values where wall crosses polygon edges
+    const ts = [0, 1];
+    const n = erasePts.length;
+    for (let i = 0; i < n; i++) {
+      const p = erasePts[i], q = erasePts[(i + 1) % n];
+      const ex = q.x - p.x, ey = q.y - p.y;
+      const denom = dx * ey - dy * ex;
+      if (Math.abs(denom) < 0.0001) continue;
+      const t = ((p.x - w.x1) * ey - (p.y - w.y1) * ex) / denom;
+      const u = ((p.x - w.x1) * dy - (p.y - w.y1) * dx) / denom;
+      if (t > 0.0001 && t < 0.9999 && u >= 0 && u <= 1) ts.push(t);
+    }
+    ts.sort((a, b) => a - b);
+    let kept = false;
+    for (let i = 0; i < ts.length - 1; i++) {
+      const tA = ts[i], tB = ts[i + 1];
+      if (tB - tA < 0.0001) continue;
+      const mx = w.x1 + (tA + tB) / 2 * dx, my = w.y1 + (tA + tB) / 2 * dy;
+      if (!pointInPoly(mx, my, erasePts)) {
+        newWalls.push({ ...w, id: kept ? state.nextWallId++ : w.id,
+          x1: w.x1 + tA * dx, y1: w.y1 + tA * dy,
+          x2: w.x1 + tB * dx, y2: w.y1 + tB * dy });
+        kept = true;
+      }
+    }
+    if (!kept) removedWallIds.add(w.id);
+  }
+  state.walls = newWalls;
 
-  // Openings whose wall was removed
-  const wallIds = new Set(state.walls.map(w => w.id));
-  state.openings = state.openings.filter(op => wallIds.has(op.wallId));
+  // Openings whose original wall was fully removed
+  const keptWallIds = new Set(newWalls.map(w => w.id));
+  state.openings = state.openings.filter(op => !removedWallIds.has(op.wallId) && keptWallIds.has(op.wallId));
 
   // Point objects inside polygon
   state.trees     = state.trees.filter(t  => !pointInPoly(t.x, t.y, erasePts));
