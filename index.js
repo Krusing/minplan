@@ -734,10 +734,8 @@ function draw2D() {
       for (let i = 1; i < hole.length; i++) { const h = gridToScreen(hole[i].x, hole[i].y); ctx.lineTo(h.x, h.y); }
       ctx.closePath();
     }
-    ctx.fillStyle   = 'rgba(180,160,130,0.20)';
-    ctx.strokeStyle = 'rgba(130,100,70,0.40)';
-    ctx.lineWidth   = 1;
-    ctx.fill('evenodd'); ctx.stroke();
+    ctx.fillStyle = 'rgba(180,160,130,0.20)';
+    ctx.fill('evenodd');
   }
 
   // Floor polygon in progress
