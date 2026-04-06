@@ -67,6 +67,24 @@ function gridToScreen(gx, gy) {
   return { x: gx * g + state.panX, y: gy * g + state.panY };
 }
 
+// Try to merge new wall segment with a collinear neighbour on the same floor.
+// Returns true if merged, false if a new wall was pushed instead.
+function addWall(x1, y1, x2, y2, floor, color) {
+  const dx = x2 - x1, dy = y2 - y1;
+  for (const w of state.walls) {
+    if ((w.floor ?? 0) !== floor) continue;
+    const wx = w.x2 - w.x1, wy = w.y2 - w.y1;
+    // Cross product must be 0 (collinear direction)
+    if (Math.abs(dx * wy - dy * wx) > 0.001) continue;
+    // Check if endpoints touch
+    if (w.x2 === x1 && w.y2 === y1) { w.x2 = x2; w.y2 = y2; return; }
+    if (w.x1 === x2 && w.y1 === y2) { w.x1 = x1; w.y1 = y1; return; }
+    if (w.x1 === x1 && w.y1 === y1) { w.x1 = x2; w.y1 = y2; return; }
+    if (w.x2 === x2 && w.y2 === y2) { w.x2 = x1; w.y2 = y1; return; }
+  }
+  state.walls.push({ id: state.nextWallId++, x1, y1, x2, y2, floor, color });
+}
+
 // Choose wall end based on Shift: free grid point or 45°-snapped
 function wallEnd(start, cursor) {
   return shiftDown ? { ...cursor } : snap45End(start, cursor);
@@ -713,7 +731,7 @@ function setup3DControls() {
     } else {
       const end = wallEnd(state.wallStart, gpt);
       if (end.x !== state.wallStart.x || end.y !== state.wallStart.y) {
-        state.walls.push({ id: state.nextWallId++, x1: state.wallStart.x, y1: state.wallStart.y, x2: end.x, y2: end.y, floor: state.activeFloor });
+        addWall(state.wallStart.x, state.wallStart.y, end.x, end.y, state.activeFloor);
         state.wallStart = { ...end };
         state.dirty3d   = true;
       }
@@ -1135,7 +1153,7 @@ canvas2d.addEventListener('mousedown', (e) => {
     } else {
       const end = wallEnd(state.wallStart, gpt);
       if (end.x !== state.wallStart.x || end.y !== state.wallStart.y) {
-        state.walls.push({ id: state.nextWallId++, x1: state.wallStart.x, y1: state.wallStart.y, x2: end.x, y2: end.y, floor: state.activeFloor });
+        addWall(state.wallStart.x, state.wallStart.y, end.x, end.y, state.activeFloor);
         state.wallStart = { ...end };
         state.dirty3d   = true;
       }
