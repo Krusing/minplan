@@ -52,6 +52,118 @@ const state = {
   dirty3d:    true,
 };
 
+// ── COLOR PALETTE ─────────────────────────────────────────
+const DEFAULT_WALL_PALETTE  = ['#f5f0e8','#ede0cc','#d4c4b0','#c8b090','#a89070','#e8e4dc','#d0cbc2','#b8b2aa','#a09890','#908880','#7a7068','#605850'];
+const DEFAULT_FLOOR_PALETTE = ['#c8a46e','#b8945e','#a8844e','#d4b47a','#e0c890','#8b6840','#7a5830','#6a4820','#dfc08a','#c4a060','#a88040','#906030'];
+
+let wallPalette   = [...DEFAULT_WALL_PALETTE];
+let floorPalette  = [...DEFAULT_FLOOR_PALETTE];
+let wallRecent    = [];
+let floorRecent   = [];
+let wallRemoveMode  = false;
+let floorRemoveMode = false;
+
+function addToRecent(color, arr, max = 8) {
+  const i = arr.indexOf(color);
+  if (i !== -1) arr.splice(i, 1);
+  arr.unshift(color);
+  if (arr.length > max) arr.pop();
+}
+
+function renderColorUI(uiEl, colorInputId, palette, recent, removeMode, onSelect, onRemoveToggle, onPaletteChange) {
+  uiEl.innerHTML = '';
+  uiEl.className = 'color-ui-wrap';
+  const currentColor = document.getElementById(colorInputId)?.value ?? '#ffffff';
+
+  // Palette grid (6 per row)
+  const palGrid = document.createElement('div');
+  palGrid.className = 'color-row';
+  palette.forEach((col, i) => {
+    const sw = document.createElement('div');
+    sw.className = 'color-swatch' + (col === currentColor && !removeMode ? ' sel' : '');
+    sw.style.background = col;
+    sw.title = col + '\nHögerklicka = byt färg i paletten';
+    sw.onclick = () => onSelect(col);
+    sw.addEventListener('contextmenu', e => {
+      e.preventDefault();
+      const inp = document.createElement('input');
+      inp.type = 'color'; inp.value = col;
+      inp.style.cssText = 'position:fixed;left:-999px;opacity:0;width:0;height:0;';
+      document.body.appendChild(inp);
+      inp.onchange = () => { palette[i] = inp.value; onPaletteChange(); inp.remove(); };
+      inp.onblur  = () => inp.remove();
+      inp.click();
+    });
+    palGrid.appendChild(sw);
+  });
+  uiEl.appendChild(palGrid);
+
+  // Recently used row
+  if (recent.length > 0) {
+    const lbl = document.createElement('div');
+    lbl.className = 'color-section-label';
+    lbl.textContent = 'Senast använda';
+    uiEl.appendChild(lbl);
+    const recRow = document.createElement('div');
+    recRow.className = 'color-row';
+    recent.forEach(col => {
+      const sw = document.createElement('div');
+      sw.className = 'color-swatch' + (col === currentColor && !removeMode ? ' sel' : '');
+      sw.style.background = col;
+      sw.title = col;
+      sw.onclick = () => onSelect(col);
+      recRow.appendChild(sw);
+    });
+    uiEl.appendChild(recRow);
+  }
+
+  // Bottom row: custom picker + remove button
+  const bot = document.createElement('div');
+  bot.className = 'color-ui-bottom';
+  const customLbl = document.createElement('span');
+  customLbl.textContent = 'Anpassad';
+  customLbl.style.cssText = 'font-size:10px;color:var(--text-muted);flex:1;';
+  const colorInp = document.getElementById(colorInputId);
+  colorInp.style.display = '';
+  colorInp.onchange = () => onSelect(colorInp.value);
+  const removeBtn = document.createElement('button');
+  removeBtn.className = 'action-btn color-remove-btn' + (removeMode ? ' remove-active' : '');
+  removeBtn.textContent = '✕ Ta bort';
+  removeBtn.onclick = onRemoveToggle;
+  bot.appendChild(customLbl);
+  bot.appendChild(colorInp);
+  bot.appendChild(removeBtn);
+  uiEl.appendChild(bot);
+}
+
+function refreshWallPalette() {
+  const el = document.getElementById('wall-palette-ui');
+  if (!el) return;
+  renderColorUI(el, 'wall-color', wallPalette, wallRecent, wallRemoveMode,
+    (col) => {
+      wallRemoveMode = false;
+      document.getElementById('wall-color').value = col;
+      refreshWallPalette();
+    },
+    () => { wallRemoveMode = !wallRemoveMode; refreshWallPalette(); },
+    () => { refreshWallPalette(); saveSession(); }
+  );
+}
+
+function refreshFloorPalette() {
+  const el = document.getElementById('floor-palette-ui');
+  if (!el) return;
+  renderColorUI(el, 'floor3d-color', floorPalette, floorRecent, floorRemoveMode,
+    (col) => {
+      floorRemoveMode = false;
+      document.getElementById('floor3d-color').value = col;
+      refreshFloorPalette();
+    },
+    () => { floorRemoveMode = !floorRemoveMode; refreshFloorPalette(); },
+    () => { refreshFloorPalette(); saveSession(); }
+  );
+}
+
 // ── 2D CANVAS ──────────────────────────────────────────────
 const canvas2d = document.getElementById('floor-plan');
 const ctx      = canvas2d.getContext('2d');
@@ -1491,7 +1603,15 @@ canvas2d.addEventListener('mousedown', (e) => {
 
   } else if (state.tool === 'paint') {
     const color = document.getElementById('wall-color').value;
-    if (shiftDown) {
+    if (wallRemoveMode) {
+      if (state.hoverWall >= 0) {
+        const w    = state.walls[state.hoverWall];
+        const side = wallSide(w, gpt.x, gpt.y);
+        if (side === 'front') w.colorFront = null;
+        else                  w.colorBack  = null;
+        state.dirty3d = true;
+      }
+    } else if (shiftDown) {
       // Flood-fill: color all walls bounding the clicked region on the facing side
       const cells = floodFillCells(gpt.x - 0.5, gpt.y - 0.5, state.activeFloor);
       if (cells) {
@@ -1501,6 +1621,7 @@ canvas2d.addEventListener('mousedown', (e) => {
           if (side === 'front' && !w.colorFront) { w.colorFront = color; state.dirty3d = true; }
           else if (side === 'back' && !w.colorBack) { w.colorBack = color; state.dirty3d = true; }
         }
+        addToRecent(color, wallRecent); refreshWallPalette();
       }
     } else if (state.hoverWall >= 0) {
       const w    = state.walls[state.hoverWall];
@@ -1508,6 +1629,7 @@ canvas2d.addEventListener('mousedown', (e) => {
       if (side === 'front') w.colorFront = color;
       else                  w.colorBack  = color;
       state.dirty3d = true;
+      addToRecent(color, wallRecent); refreshWallPalette();
     }
 
   } else if (state.tool === 'stair') {
@@ -1553,10 +1675,19 @@ canvas2d.addEventListener('mousedown', (e) => {
     }
 
   } else if (state.tool === 'floor3d') {
-    polyAddPoint(gpt, () => {
-      const color = document.getElementById('floor3d-color').value;
-      state.floors3d.push({ id: state.nextId++, points: [...state.polyPts], color, floor: state.activeFloor });
-    });
+    if (floorRemoveMode) {
+      for (let i = 0; i < state.floors3d.length; i++) {
+        if (state.floors3d[i].points && pointInPoly(gpt.x, gpt.y, state.floors3d[i].points)) {
+          state.floors3d[i].color = null; state.dirty3d = true; break;
+        }
+      }
+    } else {
+      polyAddPoint(gpt, () => {
+        const color = document.getElementById('floor3d-color').value;
+        state.floors3d.push({ id: state.nextId++, points: [...state.polyPts], color, floor: state.activeFloor });
+        addToRecent(color, floorRecent); refreshFloorPalette();
+      });
+    }
 
   } else if (state.tool === 'garden') {
     polyAddPoint(gpt, () => {
@@ -1637,8 +1768,10 @@ document.querySelectorAll('[data-tool]').forEach(btn => {
       openingSettingsEl.classList.add('hidden');
     }
     document.getElementById('paint-settings').classList.toggle('hidden', tool !== 'paint');
+    if (tool === 'paint')   { wallRemoveMode  = false; refreshWallPalette(); }
     document.getElementById('tree-settings').classList.toggle('hidden', tool !== 'tree');
     document.getElementById('floor3d-settings').classList.toggle('hidden', tool !== 'floor3d');
+    if (tool === 'floor3d') { floorRemoveMode = false; refreshFloorPalette(); }
     document.getElementById('furniture-settings').classList.toggle('hidden', tool !== 'furniture');
     document.getElementById('stair-settings').classList.toggle('hidden', tool !== 'stair');
     document.getElementById('foundation-settings').classList.toggle('hidden', tool !== 'foundation');
@@ -1840,6 +1973,7 @@ function saveSession() {
       nextId:      state.nextId,
       cam:  { x: cam.pos.x, y: cam.pos.y, z: cam.pos.z, yaw: cam.yaw, pitch: cam.pitch },
       view: state.view,
+      wallPalette, floorPalette, wallRecent, floorRecent,
     }));
   } catch (_) {}
 }
@@ -1895,6 +2029,10 @@ function loadSession() {
     document.getElementById('canvas-wrap').style.display = state.view !== '3d' ? 'block' : 'none';
     document.getElementById('view-3d').style.display     = state.view !== '2d' ? 'block' : 'none';
   }
+  if (data.wallPalette  && data.wallPalette.length  === DEFAULT_WALL_PALETTE.length)  wallPalette  = data.wallPalette;
+  if (data.floorPalette && data.floorPalette.length === DEFAULT_FLOOR_PALETTE.length) floorPalette = data.floorPalette;
+  if (data.wallRecent)  wallRecent  = data.wallRecent;
+  if (data.floorRecent) floorRecent = data.floorRecent;
   state.dirty3d = true;
 }
 
@@ -1931,6 +2069,8 @@ function init() {
   updateCameraMovement(0); // apply restored cam
   updateStatus();
   renderFloorSelector();
+  refreshWallPalette();
+  refreshFloorPalette();
 
   // Always show one decimal in dimension inputs (e.g. "1.0" not "1")
   document.querySelectorAll('.setting-row input[type="number"]').forEach(input => {
