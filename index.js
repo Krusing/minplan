@@ -497,7 +497,7 @@ function wallSide(w, px, py) {
   return cross2d(dx, dy, px - cx, py - cy) >= 0 ? 'front' : 'back';
 }
 
-const POLY_SNAP = 1.5; // grid units — snap-to-close distance for polygon tools
+const POLY_SNAP = 0.9; // grid units — snap-to-close distance for polygon tools
 
 // Add one point to state.polyPts. Calls onClose() and resets polyPts when the polygon closes.
 function polyAddPoint(gpt, onClose) {
