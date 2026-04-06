@@ -235,8 +235,22 @@ function clipWallToFoundations(x1, y1, x2, y2) {
     const tA = ts[i], tB = ts[i + 1];
     if (tB - tA < 0.0001) continue;
     const mx = x1 + (tA + tB) / 2 * dx, my = y1 + (tA + tB) / 2 * dy;
-    // Keep only sub-segments whose midpoint is inside at least one foundation
-    const inside = state.foundations.some(fd => fd.rings?.[0] && pointInPoly(mx, my, fd.rings[0]));
+    // Keep sub-segments whose midpoint is inside or on the boundary of a foundation
+    const inside = state.foundations.some(fd => {
+      if (!fd.rings?.[0]) return false;
+      if (pointInPoly(mx, my, fd.rings[0])) return true;
+      // Accept midpoints very close to a foundation edge (wall on boundary)
+      const ring = fd.rings[0], n = ring.length;
+      for (let i = 0; i < n; i++) {
+        const a = ring[i], b = ring[(i+1)%n];
+        const ex = b.x-a.x, ey = b.y-a.y, lenE = ex*ex+ey*ey;
+        if (lenE < 0.0001) continue;
+        const t = Math.max(0, Math.min(1, ((mx-a.x)*ex+(my-a.y)*ey)/lenE));
+        const dist = Math.hypot(mx-(a.x+t*ex), my-(a.y+t*ey));
+        if (dist < 0.05) return true;
+      }
+      return false;
+    });
     if (inside) result.push({ x1: x1 + tA * dx, y1: y1 + tA * dy, x2: x1 + tB * dx, y2: y1 + tB * dy });
   }
   return result;
@@ -1536,9 +1550,12 @@ function rebuild3D() {
   for (const w of state.walls) {
     const floorIdx = w.floor ?? 0;
     const fd       = state.floorDefs[floorIdx] ?? state.floorDefs[0];
-    const yOff     = floorYOffset(floorIdx);
     const wallH    = fd.wallHeight;
     const wallMat  = new THREE.MeshLambertMaterial({ color: w.color ? new THREE.Color(w.color) : 0xf5f0e8 });
+    // Find foundation under wall midpoint and add its height as base offset
+    const wmx = (w.x1 + w.x2) / 2, wmy = (w.y1 + w.y2) / 2;
+    const foundUnder = state.foundations.find(fn => fn.rings?.[0] && pointInPoly(wmx, wmy, fn.rings[0]));
+    const yOff = floorYOffset(floorIdx) + (foundUnder ? foundUnder.height : 0);
     buildWallMeshes(w, wallMat, yOff, wallH);
   }
 
