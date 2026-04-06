@@ -33,11 +33,10 @@ const state = {
   nextWallId:     1,
   nextId:         1,
 
-  tool:           'pan',  // pan | wall | erase | erase-area | door | window | paint | garden | tree | floor3d | furniture
+  tool:           'pan',  // pan | wall | erase | door | window | paint | garden | tree | floor3d | furniture
   rectStart:      null,  // {x,y} start for rectangle tools (furniture/foundation)
-  polyPts:        [],    // [{x,y}] polygon in progress (floor3d / garden / erase-area)
+  polyPts:        [],    // [{x,y}] polygon in progress (wall/erase/floor3d/garden/foundation)
   wallStart:      null,   // {x,y} or null (wall draw tool)
-  eraseStart:     null,   // {x,y} or null (erase tool segment mode)
   hoverPt:        null,
   hoverWall:      -1,     // wall index (erase/placement hover)
   hoverOpening:   null,   // opening id (erase hover)
@@ -979,28 +978,11 @@ function draw2D() {
     ctx.restore();
   }
 
-  // Erase segment preview
-  if (state.tool === 'erase' && state.eraseStart && state.hoverPt) {
-    const end   = wallEnd(state.eraseStart, state.hoverPt);
-    const p1    = gridToScreen(state.eraseStart.x, state.eraseStart.y);
-    const p2    = gridToScreen(end.x, end.y);
-    const thick = Math.max(3, g * 0.3);
-    ctx.strokeStyle = 'rgba(192,64,64,0.55)';
-    ctx.lineWidth   = thick;
-    ctx.lineCap     = 'round';
-    ctx.setLineDash([g * 0.45, g * 0.2]);
-    ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = '#c05050'; ctx.beginPath(); ctx.arc(p1.x, p1.y, 5, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#c05050'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(p2.x, p2.y, 4.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-  }
-
-  // Erase-area polygon preview
-  if (state.tool === 'erase-area' && state.polyPts.length > 0 && state.hoverPt) {
+  // Erase polygon preview (covers both 2-pt segment and 3+-pt area mode)
+  if (state.tool === 'erase' && state.polyPts.length > 0 && state.hoverPt) {
     const pts = state.polyPts;
     const end  = wallEnd(pts[pts.length - 1], state.hoverPt);
-    const snapClose = pts.length >= 3 && Math.hypot(state.hoverPt.x - pts[0].x, state.hoverPt.y - pts[0].y) < POLY_SNAP;
+    const snapClose = pts.length >= 2 && Math.hypot(state.hoverPt.x - pts[0].x, state.hoverPt.y - pts[0].y) < POLY_SNAP;
     const drawEnd   = snapClose ? pts[0] : end;
     ctx.strokeStyle = 'rgba(192,64,64,0.7)'; ctx.lineWidth = 1.5; ctx.setLineDash([5, 3]);
     ctx.beginPath();
@@ -1242,10 +1224,9 @@ function setup3DControls() {
     if (e.code.startsWith('Arrow')) e.preventDefault();
     if (e.code === 'Escape' && fpsMode) setFpsMode(false);
     if (e.code === 'Escape') {
-      if (state.wallStart)          { state.wallStart  = null; updateStatus(); }
-      if (state.eraseStart !== null){ state.eraseStart = null; updateStatus(); }
-      if (state.rectStart !== null) { state.rectStart  = null; }
-      if (state.polyPts.length > 0) { state.polyPts    = [];   updateStatus(); }
+      if (state.wallStart)          { state.wallStart = null; updateStatus(); }
+      if (state.rectStart !== null) { state.rectStart = null; }
+      if (state.polyPts.length > 0) { state.polyPts   = [];   updateStatus(); }
     }
   });
   window.addEventListener('keyup', (e) => {
@@ -1657,8 +1638,8 @@ canvas2d.addEventListener('mousemove', (e) => {
   state.hoverPt = screenToGrid(mx, my);
 
   if (state.tool === 'erase') {
-    if (state.eraseStart) {
-      // Segment mode: just track hover position for preview, no object highlighting
+    if (state.polyPts.length > 0) {
+      // Polygon in progress: no object highlighting, just crosshair
       state.hoverOpening = null;
       state.hoverWall    = -1;
       canvas2d.style.cursor = 'crosshair';
@@ -1725,13 +1706,19 @@ canvas2d.addEventListener('mousedown', (e) => {
     }
 
   } else if (state.tool === 'erase') {
-    if (!state.eraseStart) {
-      // No segment started: single-click to remove openings, trees, stairs, furniture
+    if (state.polyPts.length === 0) {
+      // No polygon started: single-click to remove objects
       if (state.hoverOpening) {
         state.openings = state.openings.filter(op => op.id !== state.hoverOpening);
         state.hoverOpening = null; state.dirty3d = true;
       } else {
         let removed = false;
+        if (state.hoverWall >= 0) {
+          // Clicked directly on a wall → split/remove it
+          const w = state.walls[state.hoverWall];
+          eraseWallSegment(w.x1, w.y1, w.x2, w.y2, state.activeFloor);
+          state.hoverWall = -1; state.dirty3d = true; removed = true;
+        }
         for (let i = 0; i < state.stairs.length && !removed; i++) {
           if (Math.hypot(gpt.x - state.stairs[i].x, gpt.y - state.stairs[i].y) <= 2) {
             state.stairs.splice(i, 1); state.dirty3d = true; removed = true;
@@ -1749,22 +1736,32 @@ canvas2d.addEventListener('mousedown', (e) => {
           }
         }
         if (!removed) {
-          // Start erase segment (like wall tool)
-          state.eraseStart = { ...gpt };
+          // Start polygon erase
+          state.polyPts = [{ ...gpt }];
+          updateStatus();
         }
       }
+    } else if (state.polyPts.length >= 2 &&
+               Math.hypot(gpt.x - state.polyPts[0].x, gpt.y - state.polyPts[0].y) < POLY_SNAP) {
+      // Close polygon
+      if (state.polyPts.length === 2) {
+        // Two-point segment → wall segment erase
+        const end = wallEnd(state.polyPts[0], state.polyPts[1]);
+        eraseWallSegment(state.polyPts[0].x, state.polyPts[0].y, end.x, end.y, state.activeFloor);
+      } else {
+        // Three or more points → area erase
+        eraseAreaPolygon([...state.polyPts], state.activeFloor);
+      }
+      state.polyPts = []; state.dirty3d = true; updateStatus();
     } else {
-      // Second click: erase wall segment collinear with eraseStart→gpt
-      const end = wallEnd(state.eraseStart, gpt);
-      eraseWallSegment(state.eraseStart.x, state.eraseStart.y, end.x, end.y, state.activeFloor);
-      state.eraseStart = null;
-      state.dirty3d = true;
+      // Add next polygon point
+      const last = state.polyPts[state.polyPts.length - 1];
+      const end  = wallEnd(last, gpt);
+      if (end.x !== last.x || end.y !== last.y) {
+        state.polyPts.push({ ...end });
+        updateStatus();
+      }
     }
-
-  } else if (state.tool === 'erase-area') {
-    polyAddPoint(gpt, () => {
-      eraseAreaPolygon([...state.polyPts], state.activeFloor);
-    });
 
   } else if (state.tool === 'paint') {
     const color = document.getElementById('wall-color').value;
@@ -1909,10 +1906,9 @@ canvas2d.addEventListener('contextmenu', (e) => {
   state.isPanning = false;
   if ((state._rightDragDist ?? 0) > 5) { state._rightDragDist = 0; return; } // was a pan drag
   state._rightDragDist = 0;
-  if (state.tool === 'wall')       { state.wallStart  = null; updateStatus(); }
-  if (state.eraseStart !== null)   { state.eraseStart = null; updateStatus(); }
-  if (state.rectStart !== null)    { state.rectStart  = null; }
-  if (state.polyPts.length > 0)   { state.polyPts    = [];   updateStatus(); }
+  if (state.tool === 'wall')       { state.wallStart = null; updateStatus(); }
+  if (state.rectStart !== null)    { state.rectStart = null; }
+  if (state.polyPts.length > 0)   { state.polyPts   = [];   updateStatus(); }
 });
 canvas2d.addEventListener('dblclick', () => {
   if (state.tool === 'wall') { state.wallStart = null; updateStatus(); }
@@ -1937,10 +1933,9 @@ const windowSettingsEl  = document.getElementById('window-settings');
 document.querySelectorAll('[data-tool]').forEach(btn => {
   btn.addEventListener('click', () => {
     const tool = btn.dataset.tool;
-    state.tool        = tool;
-    state.wallStart   = null;
-    state.eraseStart  = null;
-    state.rectStart   = null;
+    state.tool      = tool;
+    state.wallStart = null;
+    state.rectStart = null;
     state.polyPts     = [];
     state.openingPreview = null;
 
@@ -1968,7 +1963,7 @@ document.querySelectorAll('[data-tool]').forEach(btn => {
     document.getElementById('stair-settings').classList.toggle('hidden', tool !== 'stair');
     document.getElementById('foundation-settings').classList.toggle('hidden', tool !== 'foundation');
 
-    const cursors = { pan: 'grab', wall: 'crosshair', erase: 'default', 'erase-area': 'crosshair', door: 'default', window: 'default', paint: 'default', foundation: 'crosshair', garden: 'crosshair', tree: 'crosshair', floor3d: 'crosshair', furniture: 'crosshair', stair: 'crosshair' };
+    const cursors = { pan: 'grab', wall: 'crosshair', erase: 'default', door: 'default', window: 'default', paint: 'default', foundation: 'crosshair', garden: 'crosshair', tree: 'crosshair', floor3d: 'crosshair', furniture: 'crosshair', stair: 'crosshair' };
     canvas2d.style.cursor = cursors[tool] ?? 'default';
 
     updateStatus();
@@ -2130,12 +2125,9 @@ function updateStatus() {
     wall:   state.wallStart
               ? 'Klicka för att placera slutpunkt  ·  Högerklicka = avbryt'
               : 'Klicka för att starta en vägg',
-    erase:  state.eraseStart
-              ? 'Klicka för att placera slutpunkt  ·  Högerklicka = avbryt'
-              : 'Klicka på objekt för att ta bort  ·  Klicka på tomt ställe = starta raderingssegment',
-    'erase-area': state.polyPts.length > 0
-              ? `${state.polyPts.length} punkter  ·  Klick nära start = stäng polygon  ·  Högerklicka = avbryt`
-              : 'Klicka för att börja rita raderingsyta',
+    erase:  state.polyPts.length > 0
+              ? `${state.polyPts.length} punkter  ·  Klick nära start = stäng  ·  Högerklicka = avbryt`
+              : 'Klicka på objekt för att ta bort  ·  Klicka på tomt = rita raderingsyta',
     door:   'Håll över en vägg och klicka för att placera dörröppning',
     window: 'Håll över en vägg och klicka för att placera fönster',
     paint:  'Klicka på vägg = färga sida  ·  Shift+klick = fyll alla väggar i slutet område',
