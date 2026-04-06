@@ -1617,10 +1617,24 @@ function rebuild3D() {
     const w   = Math.abs(furn.x2 - furn.x1) * UNIT;
     const d   = Math.abs(furn.y2 - furn.y1) * UNIT;
     const h   = furn.height;
-    const cx  = (furn.x1 + furn.x2) / 2 * UNIT;
-    const cz  = (furn.y1 + furn.y2) / 2 * UNIT;
+    const cx  = (furn.x1 + furn.x2) / 2;
+    const cz  = (furn.y1 + furn.y2) / 2;
+    const foundUnder = state.foundations.find(fn => {
+      if (!fn.rings?.[0]) return false;
+      if (pointInPoly(cx, cz, fn.rings[0])) return true;
+      const ring = fn.rings[0], n = ring.length;
+      for (let i = 0; i < n; i++) {
+        const a = ring[i], b = ring[(i+1)%n];
+        const ex = b.x-a.x, ey = b.y-a.y, len2 = ex*ex+ey*ey;
+        if (len2 < 0.0001) continue;
+        const t = Math.max(0, Math.min(1, ((cx-a.x)*ex+(cz-a.y)*ey)/len2));
+        if (Math.hypot(cx-(a.x+t*ex), cz-(a.y+t*ey)) < 0.1) return true;
+      }
+      return false;
+    });
+    const yBase = foundUnder ? foundUnder.height : 0;
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), furnMat);
-    mesh.position.set(cx, h / 2, cz);
+    mesh.position.set(cx * UNIT, yBase + h / 2, cz * UNIT);
     mesh.rotation.y    = (furn.rotation || 0) * Math.PI / 180;
     mesh.castShadow    = true;
     mesh.receiveShadow = true;
