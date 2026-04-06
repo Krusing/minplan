@@ -1532,17 +1532,17 @@ function rebuild3D() {
     }
   }
 
-  // Foundations (polygon extruded downward)
-  const foundMat = new THREE.MeshLambertMaterial({ color: 0xa08c6e });
+  // Foundations (polygon extruded upward from ground)
+  const foundMat = new THREE.MeshLambertMaterial({ color: 0xa08c6e, side: THREE.DoubleSide });
   for (const fd of state.foundations) {
     if (!fd.points || fd.points.length < 3) continue;
     const shape = new THREE.Shape();
-    shape.moveTo(fd.points[0].x * UNIT, fd.points[0].y * UNIT);
-    for (let i = 1; i < fd.points.length; i++) shape.lineTo(fd.points[i].x * UNIT, fd.points[i].y * UNIT);
+    shape.moveTo(fd.points[0].x * UNIT, -fd.points[0].y * UNIT);
+    for (let i = 1; i < fd.points.length; i++) shape.lineTo(fd.points[i].x * UNIT, -fd.points[i].y * UNIT);
     shape.closePath();
     const geom = new THREE.ExtrudeGeometry(shape, { depth: fd.height, bevelEnabled: false });
     const mesh = new THREE.Mesh(geom, foundMat);
-    mesh.rotation.x    = Math.PI / 2;  // extrudes downward (negative world Y)
+    mesh.rotation.x    = -Math.PI / 2;  // same as floors — shape horizontal, extrudes upward (+Y)
     mesh.position.y    = 0;
     mesh.castShadow    = true;
     mesh.receiveShadow = true;
