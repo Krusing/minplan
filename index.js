@@ -2070,7 +2070,21 @@ canvas2d.addEventListener('mousedown', (e) => {
         if (state.activeFloor === 0) {
           state.gardens = subtractPolyFromCollection(state.gardens, newPts, null);
         }
-        state.floors3d.push({ id: state.nextId++, rings: [newPts], color, floor: state.activeFloor });
+        // Clip floor to foundation boundaries (floor 0 only — upper floors have no foundation constraint)
+        let clippedPts = [newPts];
+        if (state.activeFloor === 0 && state.foundations.length > 0) {
+          const foundUnion = state.foundations.reduce((acc, fd) => {
+            if (!fd.rings?.[0]) return acc;
+            const r = polygonClipping.union(acc, toClipPoly(fd.rings));
+            return r.length ? r : acc;
+          }, [[[]]]);
+          const clipped = polygonClipping.intersection([newPts.map(p=>[p.x,p.y])], foundUnion);
+          clippedPts = clipped.map(poly => fromClipPoly(poly)[0]);
+        }
+        for (const pts of clippedPts) {
+          if (!pts || pts.length < 3) continue;
+          state.floors3d.push({ id: state.nextId++, rings: [pts], color, floor: state.activeFloor });
+        }
         // Merge same-color adjacent/overlapping floors
         state.floors3d = tryMergeCollection(state.floors3d,
           (a, b) => (a.floor ?? 0) === (b.floor ?? 0) && a.color === b.color);
