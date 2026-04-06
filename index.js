@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import polygonClipping from 'polygon-clipping';
 
 // ── CONSTANTS ──────────────────────────────────────────────
 const GRID          = 24;    // pixels per grid unit
@@ -20,9 +21,9 @@ function floorYOffset(floorIdx) {
 const state = {
   walls:          [],    // [{id, x1, y1, x2, y2, colorFront, colorBack, floor}]
   openings:       [],    // [{id, wallId, left, width, height, fromFloor, type}]
-  gardens:        [],    // [{id, points:[{x,y}], holes:[[{x,y}]]}]
+  gardens:        [],    // [{id, rings:[[{x,y}],...]}]              rings[0]=outer, rings[1+]=inner holes
   trees:          [],    // [{id, x, y, radius, type}] type: 'tree'|'bush'
-  floors3d:       [],    // [{id, points:[{x,y}], holes:[[{x,y}]], color, floor}]
+  floors3d:       [],    // [{id, rings:[[{x,y}],...], color, floor}]  rings[0]=outer, rings[1+]=inner holes
   fillFloors:     [],    // [{id, cells:[{x,y}], color, floor}] (legacy – rendered but not created)
   furniture:      [],    // [{id, x1, y1, x2, y2, height, label, rotation}]
   foundations:    [],    // [{id, points:[{x,y}], height}]
@@ -244,18 +245,64 @@ function eraseWallSegment(ex1, ey1, ex2, ey2, floor) {
   state.walls = newWalls;
 }
 
-// Add erase polygon as a hole in any overlapping floor/garden polygons.
-function eraseAreaPolygon(pts, floor) {
-  const overlaps = (poly) => pts.some(p => pointInPoly(p.x, p.y, poly)) ||
-                              poly.some(p => pointInPoly(p.x, p.y, pts));
-  for (const fl of state.floors3d) {
-    if ((fl.floor ?? 0) !== floor || !fl.points) continue;
-    if (overlaps(fl.points)) { fl.holes = [...(fl.holes || []), [...pts]]; }
+// Convert our rings format to polygon-clipping Polygon format
+function toClipPoly(rings) {
+  return rings.map(r => r.map(p => [p.x, p.y]));
+}
+// Convert polygon-clipping Polygon back to our rings format
+function fromClipPoly(poly) {
+  return poly.map(ring => ring.map(p => ({ x: p[0], y: p[1] })));
+}
+
+// Try to merge touching/overlapping items in a collection using polygon union.
+// matchFn(a, b) returns true if two items are candidates for merging.
+function tryMergeCollection(items, matchFn) {
+  let merged = true;
+  while (merged) {
+    merged = false;
+    outer: for (let i = 0; i < items.length; i++) {
+      for (let j = i + 1; j < items.length; j++) {
+        if (!items[i].rings?.[0] || !items[j].rings?.[0]) continue;
+        if (!matchFn(items[i], items[j])) continue;
+        const result = polygonClipping.union(toClipPoly(items[i].rings), toClipPoly(items[j].rings));
+        if (result.length === 1) {
+          items[i] = { ...items[i], rings: fromClipPoly(result[0]) };
+          items.splice(j, 1);
+          merged = true;
+          break outer;
+        }
+      }
+    }
   }
-  for (const gd of state.gardens) {
-    if (!gd.points) continue;
-    if (overlaps(gd.points)) { gd.holes = [...(gd.holes || []), [...pts]]; }
+  return items;
+}
+
+// Subtract erase polygon from all overlapping floors/gardens on the given floor level.
+function eraseAreaPolygon(erasePts, activeFloor) {
+  const eraseClip = [erasePts.map(p => [p.x, p.y])];
+
+  function processCollection(items, useFloorCheck) {
+    const out = [];
+    for (const item of items) {
+      if (!item.rings?.[0]) { out.push(item); continue; }
+      if (useFloorCheck && (item.floor ?? 0) !== activeFloor) { out.push(item); continue; }
+      const outer = item.rings[0];
+      const overlaps = erasePts.some(p => pointInPoly(p.x, p.y, outer)) ||
+                       outer.some(p => pointInPoly(p.x, p.y, erasePts));
+      if (!overlaps) { out.push(item); continue; }
+      const result = polygonClipping.difference(toClipPoly(item.rings), eraseClip);
+      let first = true;
+      for (const poly of result) {
+        out.push({ ...item, id: first ? item.id : state.nextId++, rings: fromClipPoly(poly) });
+        first = false;
+      }
+      // result.length === 0 → fully erased, don't push
+    }
+    return out;
   }
+
+  state.floors3d = processCollection(state.floors3d, true);
+  state.gardens  = processCollection(state.gardens,  false);
 }
 
 // ── FLOOD FILL ─────────────────────────────────────────────
@@ -722,16 +769,13 @@ function draw2D() {
 
   // Floor surfaces (polygon, neutral in 2D — color only in 3D)
   for (const fl of state.floors3d) {
-    if (!fl.points || fl.points.length < 3) continue;
+    if (!fl.rings?.[0] || fl.rings[0].length < 3) continue;
     if ((fl.floor ?? 0) !== state.activeFloor) continue;
     ctx.beginPath();
-    const p0 = gridToScreen(fl.points[0].x, fl.points[0].y);
-    ctx.moveTo(p0.x, p0.y);
-    for (let i = 1; i < fl.points.length; i++) { const p = gridToScreen(fl.points[i].x, fl.points[i].y); ctx.lineTo(p.x, p.y); }
-    ctx.closePath();
-    for (const hole of (fl.holes || [])) {
-      const h0 = gridToScreen(hole[0].x, hole[0].y); ctx.moveTo(h0.x, h0.y);
-      for (let i = 1; i < hole.length; i++) { const h = gridToScreen(hole[i].x, hole[i].y); ctx.lineTo(h.x, h.y); }
+    for (const ring of fl.rings) {
+      const p0 = gridToScreen(ring[0].x, ring[0].y);
+      ctx.moveTo(p0.x, p0.y);
+      for (let i = 1; i < ring.length; i++) { const p = gridToScreen(ring[i].x, ring[i].y); ctx.lineTo(p.x, p.y); }
       ctx.closePath();
     }
     ctx.fillStyle = 'rgba(180,160,130,0.20)';
@@ -775,15 +819,12 @@ function draw2D() {
 
   // Gardens (polygon, no stroke between adjacent patches)
   for (const gd of state.gardens) {
-    if (!gd.points || gd.points.length < 3) continue;
+    if (!gd.rings?.[0] || gd.rings[0].length < 3) continue;
     ctx.beginPath();
-    const p0g = gridToScreen(gd.points[0].x, gd.points[0].y);
-    ctx.moveTo(p0g.x, p0g.y);
-    for (let i = 1; i < gd.points.length; i++) { const p = gridToScreen(gd.points[i].x, gd.points[i].y); ctx.lineTo(p.x, p.y); }
-    ctx.closePath();
-    for (const hole of (gd.holes || [])) {
-      const h0 = gridToScreen(hole[0].x, hole[0].y); ctx.moveTo(h0.x, h0.y);
-      for (let i = 1; i < hole.length; i++) { const h = gridToScreen(hole[i].x, hole[i].y); ctx.lineTo(h.x, h.y); }
+    for (const ring of gd.rings) {
+      const p0g = gridToScreen(ring[0].x, ring[0].y);
+      ctx.moveTo(p0g.x, p0g.y);
+      for (let i = 1; i < ring.length; i++) { const p = gridToScreen(ring[i].x, ring[i].y); ctx.lineTo(p.x, p.y); }
       ctx.closePath();
     }
     ctx.fillStyle = 'rgba(110,170,80,0.30)';
@@ -1520,15 +1561,17 @@ function rebuild3D() {
     }
   }
 
-  // Floor surfaces (polygon, with holes)
+  // Floor surfaces (polygon, inner rings as THREE holes if erase punched through)
   for (const fl of state.floors3d) {
-    if (!fl.points || fl.points.length < 3) continue;
+    if (!fl.rings?.[0] || fl.rings[0].length < 3) continue;
     const yOff  = floorYOffset(fl.floor ?? 0);
+    const outer = fl.rings[0];
     const shape = new THREE.Shape();
-    shape.moveTo(fl.points[0].x * UNIT, -fl.points[0].y * UNIT);
-    for (let i = 1; i < fl.points.length; i++) shape.lineTo(fl.points[i].x * UNIT, -fl.points[i].y * UNIT);
+    shape.moveTo(outer[0].x * UNIT, -outer[0].y * UNIT);
+    for (let i = 1; i < outer.length; i++) shape.lineTo(outer[i].x * UNIT, -outer[i].y * UNIT);
     shape.closePath();
-    for (const hole of (fl.holes || [])) {
+    for (let r = 1; r < fl.rings.length; r++) {
+      const hole = fl.rings[r];
       const path = new THREE.Path();
       path.moveTo(hole[0].x * UNIT, -hole[0].y * UNIT);
       for (let i = 1; i < hole.length; i++) path.lineTo(hole[i].x * UNIT, -hole[i].y * UNIT);
@@ -1542,15 +1585,17 @@ function rebuild3D() {
     scene.add(mesh);
   }
 
-  // Gardens (polygon, with holes)
+  // Gardens (polygon, inner rings as THREE holes if erase punched through)
   const gardenMat = new THREE.MeshLambertMaterial({ color: 0x6aaa44, transparent: true, opacity: 0.7 });
   for (const gd of state.gardens) {
-    if (!gd.points || gd.points.length < 3) continue;
+    if (!gd.rings?.[0] || gd.rings[0].length < 3) continue;
+    const outer = gd.rings[0];
     const shape = new THREE.Shape();
-    shape.moveTo(gd.points[0].x * UNIT, -gd.points[0].y * UNIT);
-    for (let i = 1; i < gd.points.length; i++) shape.lineTo(gd.points[i].x * UNIT, -gd.points[i].y * UNIT);
+    shape.moveTo(outer[0].x * UNIT, -outer[0].y * UNIT);
+    for (let i = 1; i < outer.length; i++) shape.lineTo(outer[i].x * UNIT, -outer[i].y * UNIT);
     shape.closePath();
-    for (const hole of (gd.holes || [])) {
+    for (let r = 1; r < gd.rings.length; r++) {
+      const hole = gd.rings[r];
       const path = new THREE.Path();
       path.moveTo(hole[0].x * UNIT, -hole[0].y * UNIT);
       for (let i = 1; i < hole.length; i++) path.lineTo(hole[i].x * UNIT, -hole[i].y * UNIT);
@@ -1794,7 +1839,8 @@ canvas2d.addEventListener('mousedown', (e) => {
   } else if (state.tool === 'floor3d') {
     if (floorRemoveMode) {
       for (let i = 0; i < state.floors3d.length; i++) {
-        if (state.floors3d[i].points && pointInPoly(gpt.x, gpt.y, state.floors3d[i].points)) {
+        const fl = state.floors3d[i];
+        if (fl.rings?.[0] && pointInPoly(gpt.x, gpt.y, fl.rings[0])) {
           state.floors3d[i].color = null; state.dirty3d = true; break;
         }
       }
@@ -1804,12 +1850,14 @@ canvas2d.addEventListener('mousedown', (e) => {
         const newPts = [...state.polyPts];
         // Remove any existing floor whose centroid lies inside the new polygon
         state.floors3d = state.floors3d.filter(fl => {
-          if (!fl.points || (fl.floor ?? 0) !== state.activeFloor) return true;
-          const cx = fl.points.reduce((s, p) => s + p.x, 0) / fl.points.length;
-          const cy = fl.points.reduce((s, p) => s + p.y, 0) / fl.points.length;
+          if (!fl.rings?.[0] || (fl.floor ?? 0) !== state.activeFloor) return true;
+          const cx = fl.rings[0].reduce((s, p) => s + p.x, 0) / fl.rings[0].length;
+          const cy = fl.rings[0].reduce((s, p) => s + p.y, 0) / fl.rings[0].length;
           return !pointInPoly(cx, cy, newPts);
         });
-        state.floors3d.push({ id: state.nextId++, points: newPts, color, floor: state.activeFloor });
+        state.floors3d.push({ id: state.nextId++, rings: [newPts], color, floor: state.activeFloor });
+        state.floors3d = tryMergeCollection(state.floors3d,
+          (a, b) => (a.floor ?? 0) === (b.floor ?? 0) && a.color === b.color);
         addToRecent(color, floorRecent); refreshFloorPalette();
       });
     }
@@ -1818,12 +1866,13 @@ canvas2d.addEventListener('mousedown', (e) => {
     polyAddPoint(gpt, () => {
       const newPts = [...state.polyPts];
       state.gardens = state.gardens.filter(gd => {
-        if (!gd.points) return true;
-        const cx = gd.points.reduce((s, p) => s + p.x, 0) / gd.points.length;
-        const cy = gd.points.reduce((s, p) => s + p.y, 0) / gd.points.length;
+        if (!gd.rings?.[0]) return true;
+        const cx = gd.rings[0].reduce((s, p) => s + p.x, 0) / gd.rings[0].length;
+        const cy = gd.rings[0].reduce((s, p) => s + p.y, 0) / gd.rings[0].length;
         return !pointInPoly(cx, cy, newPts);
       });
-      state.gardens.push({ id: state.nextId++, points: newPts });
+      state.gardens.push({ id: state.nextId++, rings: [newPts] });
+      state.gardens = tryMergeCollection(state.gardens, () => true);
     });
 
   } else if (state.tool === 'door' || state.tool === 'window') {
@@ -2163,17 +2212,23 @@ function loadSession() {
   if (data.openings)    state.openings    = data.openings;
   if (data.gardens) {
     state.gardens = data.gardens.map(gd => {
-      if (gd.x1 !== undefined && !gd.points)
-        return { id: gd.id, points: [{x:gd.x1,y:gd.y1},{x:gd.x2,y:gd.y1},{x:gd.x2,y:gd.y2},{x:gd.x1,y:gd.y2}] };
-      return gd;
+      if (gd.rings) return gd; // already new format
+      const pts = gd.points ?? (gd.x1 !== undefined
+        ? [{x:gd.x1,y:gd.y1},{x:gd.x2,y:gd.y1},{x:gd.x2,y:gd.y2},{x:gd.x1,y:gd.y2}]
+        : null);
+      if (!pts) return gd;
+      return { id: gd.id, rings: [pts, ...(gd.holes || [])] };
     });
   }
   if (data.trees)       state.trees       = data.trees;
   if (data.floors3d) {
     state.floors3d = data.floors3d.map(fl => {
-      if (fl.x1 !== undefined && !fl.points)
-        return { id: fl.id, points: [{x:fl.x1,y:fl.y1},{x:fl.x2,y:fl.y1},{x:fl.x2,y:fl.y2},{x:fl.x1,y:fl.y2}], color: fl.color, floor: fl.floor ?? 0 };
-      return fl;
+      if (fl.rings) return fl; // already new format
+      const pts = fl.points ?? (fl.x1 !== undefined
+        ? [{x:fl.x1,y:fl.y1},{x:fl.x2,y:fl.y1},{x:fl.x2,y:fl.y2},{x:fl.x1,y:fl.y2}]
+        : null);
+      if (!pts) return fl;
+      return { id: fl.id, rings: [pts, ...(fl.holes || [])], color: fl.color, floor: fl.floor ?? 0 };
     });
   }
   if (data.fillFloors)  state.fillFloors  = data.fillFloors;
