@@ -25,7 +25,7 @@ const state = {
   floors3d:       [],    // [{id, points:[{x,y}], color, floor}]
   fillFloors:     [],    // [{id, cells:[{x,y}], color, floor}] (legacy – rendered but not created)
   furniture:      [],    // [{id, x1, y1, x2, y2, height, label, rotation}]
-  foundations:    [],    // [{id, x1, y1, x2, y2, height}]
+  foundations:    [],    // [{id, points:[{x,y}], height}]
   stairs:         [],    // [{id, x, y, rotation, steps, stepLen, width, floor}]
   floorDefs:      [{id: 0, name: 'BV', wallHeight: 2.6}], // floor definitions
   activeFloor:    0,     // index into floorDefs
@@ -602,29 +602,34 @@ function draw2D() {
   ctx.stroke();
 
   // Foundations
+  // Foundations (polygon)
   for (const fd of state.foundations) {
-    const p1 = gridToScreen(fd.x1, fd.y1);
-    const p2 = gridToScreen(fd.x2, fd.y2);
-    ctx.fillStyle   = 'rgba(160,140,110,0.40)';
-    ctx.strokeStyle = 'rgba(110,90,60,0.70)';
-    ctx.lineWidth   = 1.5;
+    if (!fd.points || fd.points.length < 3) continue;
     ctx.beginPath();
-    ctx.rect(Math.min(p1.x,p2.x), Math.min(p1.y,p2.y), Math.abs(p2.x-p1.x), Math.abs(p2.y-p1.y));
+    const p0f = gridToScreen(fd.points[0].x, fd.points[0].y);
+    ctx.moveTo(p0f.x, p0f.y);
+    for (let i = 1; i < fd.points.length; i++) { const p = gridToScreen(fd.points[i].x, fd.points[i].y); ctx.lineTo(p.x, p.y); }
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(160,140,110,0.40)'; ctx.strokeStyle = 'rgba(110,90,60,0.70)'; ctx.lineWidth = 1.5;
     ctx.fill(); ctx.stroke();
   }
 
-  // Foundation placement preview
-  if (state.tool === 'foundation' && state.rectStart && state.hoverPt) {
-    const p1 = gridToScreen(state.rectStart.x, state.rectStart.y);
-    const p2 = gridToScreen(state.hoverPt.x,   state.hoverPt.y);
-    ctx.fillStyle   = 'rgba(160,140,110,0.20)';
-    ctx.strokeStyle = 'rgba(110,90,60,0.50)';
-    ctx.lineWidth   = 1.5;
-    ctx.setLineDash([6, 3]);
+  // Foundation polygon in progress
+  if (state.tool === 'foundation' && state.polyPts.length > 0 && state.hoverPt) {
+    const pts = state.polyPts;
+    const last = pts[pts.length - 1];
+    const end  = wallEnd(last, state.hoverPt);
+    const snapClose = pts.length >= 3 && Math.hypot(end.x - pts[0].x, end.y - pts[0].y) < POLY_SNAP;
+    const drawEnd   = snapClose ? pts[0] : end;
+    ctx.strokeStyle = 'rgba(110,90,60,0.7)'; ctx.lineWidth = 1.5; ctx.setLineDash([5, 3]);
     ctx.beginPath();
-    ctx.rect(Math.min(p1.x,p2.x), Math.min(p1.y,p2.y), Math.abs(p2.x-p1.x), Math.abs(p2.y-p1.y));
-    ctx.fill(); ctx.stroke();
-    ctx.setLineDash([]);
+    const p0s = gridToScreen(pts[0].x, pts[0].y);
+    ctx.moveTo(p0s.x, p0s.y);
+    for (let i = 1; i < pts.length; i++) { const p = gridToScreen(pts[i].x, pts[i].y); ctx.lineTo(p.x, p.y); }
+    const ep = gridToScreen(drawEnd.x, drawEnd.y); ctx.lineTo(ep.x, ep.y);
+    ctx.stroke(); ctx.setLineDash([]);
+    if (snapClose) { ctx.beginPath(); ctx.arc(p0s.x, p0s.y, 7, 0, Math.PI*2); ctx.strokeStyle = 'rgba(80,160,60,0.9)'; ctx.lineWidth = 2; ctx.stroke(); }
+    for (const pt of pts) { const sp = gridToScreen(pt.x, pt.y); ctx.beginPath(); ctx.arc(sp.x, sp.y, 3.5, 0, Math.PI*2); ctx.fillStyle = 'rgba(110,90,60,0.8)'; ctx.fill(); }
   }
 
   // Enclosed rooms — slightly darker grid background (issue #38)
@@ -1095,6 +1100,7 @@ function setup3DControls() {
     if (e.code === 'Space') { spaceDown = true; e.preventDefault(); }
     if (e.code.startsWith('Arrow')) e.preventDefault();
     if (e.code === 'Escape' && fpsMode) setFpsMode(false);
+    if (e.code === 'Escape' && state.polyPts.length > 0) { state.polyPts = []; updateStatus(); }
   });
   window.addEventListener('keyup', (e) => {
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') shiftDown = false;
@@ -1380,16 +1386,18 @@ function rebuild3D() {
     }
   }
 
-  // Foundations
+  // Foundations (polygon extruded downward)
   const foundMat = new THREE.MeshLambertMaterial({ color: 0xa08c6e });
   for (const fd of state.foundations) {
-    const w   = Math.abs(fd.x2 - fd.x1) * UNIT;
-    const d   = Math.abs(fd.y2 - fd.y1) * UNIT;
-    const cx  = (fd.x1 + fd.x2) / 2 * UNIT;
-    const cz  = (fd.y1 + fd.y2) / 2 * UNIT;
-    const h   = fd.height;
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), foundMat);
-    mesh.position.set(cx, -h / 2, cz); // sits below y=0 (ground level)
+    if (!fd.points || fd.points.length < 3) continue;
+    const shape = new THREE.Shape();
+    shape.moveTo(fd.points[0].x * UNIT, fd.points[0].y * UNIT);
+    for (let i = 1; i < fd.points.length; i++) shape.lineTo(fd.points[i].x * UNIT, fd.points[i].y * UNIT);
+    shape.closePath();
+    const geom = new THREE.ExtrudeGeometry(shape, { depth: fd.height, bevelEnabled: false });
+    const mesh = new THREE.Mesh(geom, foundMat);
+    mesh.rotation.x    = Math.PI / 2;  // extrudes downward (negative world Y)
+    mesh.position.y    = 0;
     mesh.castShadow    = true;
     mesh.receiveShadow = true;
     mesh.userData.dynamic = true;
@@ -1580,9 +1588,10 @@ canvas2d.addEventListener('mousedown', (e) => {
         let erased = false;
         for (let i = 0; i < state.foundations.length; i++) {
           const fd = state.foundations[i];
-          if (gpt.x >= fd.x1 && gpt.x <= fd.x2 && gpt.y >= fd.y1 && gpt.y <= fd.y2) {
-            state.foundations.splice(i, 1); state.dirty3d = true; erased = true; break;
-          }
+          const hit = fd.points
+            ? pointInPoly(gpt.x, gpt.y, fd.points)
+            : (gpt.x >= fd.x1 && gpt.x <= fd.x2 && gpt.y >= fd.y1 && gpt.y <= fd.y2);
+          if (hit) { state.foundations.splice(i, 1); state.dirty3d = true; erased = true; break; }
         }
         if (!erased) {
           for (let i = 0; i < state.floors3d.length; i++) {
@@ -1662,17 +1671,17 @@ canvas2d.addEventListener('mousedown', (e) => {
     }
 
   } else if (state.tool === 'foundation') {
-    if (!state.rectStart) {
-      state.rectStart = { ...gpt };
-    } else {
-      const s = state.rectStart, e = gpt;
-      if (s.x !== e.x || s.y !== e.y) {
-        const height = parseFloat(document.getElementById('foundation-height').value);
-        state.foundations.push({ id: state.nextId++, x1: Math.min(s.x,e.x), y1: Math.min(s.y,e.y), x2: Math.max(s.x,e.x), y2: Math.max(s.y,e.y), height });
-        state.dirty3d = true;
-      }
-      state.rectStart = null;
-    }
+    polyAddPoint(gpt, () => {
+      const height = parseFloat(document.getElementById('foundation-height').value);
+      const newPts = [...state.polyPts];
+      state.foundations = state.foundations.filter(fd => {
+        if (!fd.points) return true;
+        const cx = fd.points.reduce((s, p) => s + p.x, 0) / fd.points.length;
+        const cy = fd.points.reduce((s, p) => s + p.y, 0) / fd.points.length;
+        return !pointInPoly(cx, cy, newPts);
+      });
+      state.foundations.push({ id: state.nextId++, points: newPts, height });
+    });
 
   } else if (state.tool === 'floor3d') {
     if (floorRemoveMode) {
@@ -1684,14 +1693,29 @@ canvas2d.addEventListener('mousedown', (e) => {
     } else {
       polyAddPoint(gpt, () => {
         const color = document.getElementById('floor3d-color').value;
-        state.floors3d.push({ id: state.nextId++, points: [...state.polyPts], color, floor: state.activeFloor });
+        const newPts = [...state.polyPts];
+        // Remove any existing floor whose centroid lies inside the new polygon
+        state.floors3d = state.floors3d.filter(fl => {
+          if (!fl.points || (fl.floor ?? 0) !== state.activeFloor) return true;
+          const cx = fl.points.reduce((s, p) => s + p.x, 0) / fl.points.length;
+          const cy = fl.points.reduce((s, p) => s + p.y, 0) / fl.points.length;
+          return !pointInPoly(cx, cy, newPts);
+        });
+        state.floors3d.push({ id: state.nextId++, points: newPts, color, floor: state.activeFloor });
         addToRecent(color, floorRecent); refreshFloorPalette();
       });
     }
 
   } else if (state.tool === 'garden') {
     polyAddPoint(gpt, () => {
-      state.gardens.push({ id: state.nextId++, points: [...state.polyPts] });
+      const newPts = [...state.polyPts];
+      state.gardens = state.gardens.filter(gd => {
+        if (!gd.points) return true;
+        const cx = gd.points.reduce((s, p) => s + p.x, 0) / gd.points.length;
+        const cy = gd.points.reduce((s, p) => s + p.y, 0) / gd.points.length;
+        return !pointInPoly(cx, cy, newPts);
+      });
+      state.gardens.push({ id: state.nextId++, points: newPts });
     });
 
   } else if (state.tool === 'door' || state.tool === 'window') {
@@ -1893,28 +1917,44 @@ document.getElementById('btn-center-camera').addEventListener('click', () => {
   state.panY = wrap.clientHeight / 2 - gy * g;
 });
 
-document.getElementById('btn-clear').addEventListener('click', () => {
-  if (!confirm('Rensa allt?')) return;
-  state.walls      = [];
-  state.openings   = [];
-  state.gardens    = [];
-  state.trees      = [];
-  state.floors3d   = [];
-  state.fillFloors = [];
-  state.furniture  = [];
-  state.stairs      = [];
-  state.foundations = [];
-  state.floorDefs   = [{ id: 0, name: 'BV', wallHeight: 2.6 }];
-  state.activeFloor = 0;
-  state.wallStart  = null;
-  state.rectStart  = null;
-  state.polyPts    = [];
-  state.dirty3d    = true;
-  renderFloorSelector();
-  updateStatus();
-  clearTimeout(_saveTimer);
-  saveSession();
-});
+{ // Triple-click clear (3 clicks within 500 ms each)
+  const btn = document.getElementById('btn-clear');
+  let _clearClicks = 0, _clearTimer = null;
+  btn.addEventListener('click', () => {
+    _clearClicks++;
+    clearTimeout(_clearTimer);
+    if (_clearClicks === 1) btn.textContent = 'Rensa? (2)';
+    else if (_clearClicks === 2) btn.textContent = 'Rensa? (3)';
+    if (_clearClicks >= 3) {
+      _clearClicks = 0;
+      btn.textContent = 'Rensa allt';
+      state.walls      = [];
+      state.openings   = [];
+      state.gardens    = [];
+      state.trees      = [];
+      state.floors3d   = [];
+      state.fillFloors = [];
+      state.furniture  = [];
+      state.stairs      = [];
+      state.foundations = [];
+      state.floorDefs   = [{ id: 0, name: 'BV', wallHeight: 2.6 }];
+      state.activeFloor = 0;
+      state.wallStart  = null;
+      state.rectStart  = null;
+      state.polyPts    = [];
+      state.dirty3d    = true;
+      renderFloorSelector();
+      updateStatus();
+      clearTimeout(_saveTimer);
+      saveSession();
+      return;
+    }
+    _clearTimer = setTimeout(() => {
+      _clearClicks = 0;
+      btn.textContent = 'Rensa allt';
+    }, 500);
+  });
+}
 
 function updateStatus() {
   const msgs = {
@@ -1934,7 +1974,9 @@ function updateStatus() {
                ? `${state.polyPts.length} punkter  ·  Klick nära start = stäng polygon  ·  Högerklicka = avbryt`
                : 'Klicka för att börja rita golv',
     furniture: state.rectStart ? 'Klicka för att placera hörn 2  ·  Högerklicka = avbryt' : 'Klicka för att placera hörn 1',
-    foundation: state.rectStart ? 'Klicka för att placera hörn 2  ·  Högerklicka = avbryt' : 'Klicka för att placera hörn 1',
+    foundation: state.polyPts.length > 0
+                  ? `${state.polyPts.length} punkter  ·  Klick nära start = stäng polygon  ·  Högerklicka = avbryt`
+                  : 'Klicka för att börja rita grund',
     stair:      'Klicka för att placera trappa',
   };
   document.getElementById('status').textContent = msgs[state.tool] ?? '';
@@ -1987,7 +2029,13 @@ function loadSession() {
   let data;
   try { data = JSON.parse(localStorage.getItem(STORAGE_KEY)); } catch (_) {}
   if (!data) return;
-  if (data.foundations) state.foundations = data.foundations;
+  if (data.foundations) {
+    state.foundations = data.foundations.map(fd => {
+      if (fd.x1 !== undefined && !fd.points)
+        return { id: fd.id, points: [{x:fd.x1,y:fd.y1},{x:fd.x2,y:fd.y1},{x:fd.x2,y:fd.y2},{x:fd.x1,y:fd.y2}], height: fd.height };
+      return fd;
+    });
+  }
   if (data.walls) {
     state.walls = data.walls.map(w => {
       // migrate old single 'color' field to colorFront
