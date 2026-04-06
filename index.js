@@ -303,8 +303,25 @@ function subtractPolyFromCollection(items, clipPts, floorLevel) {
 
 // Subtract erase polygon from all overlapping floors/gardens on the given floor level.
 function eraseAreaPolygon(erasePts, activeFloor) {
+  // Surfaces
   state.floors3d = subtractPolyFromCollection(state.floors3d, erasePts, activeFloor);
   state.gardens  = subtractPolyFromCollection(state.gardens,  erasePts, null);
+
+  // Walls: remove any wall whose midpoint lies inside the polygon
+  state.walls = state.walls.filter(w => {
+    if ((w.floor ?? 0) !== activeFloor) return true;
+    const mx = (w.x1 + w.x2) / 2, my = (w.y1 + w.y2) / 2;
+    return !pointInPoly(mx, my, erasePts);
+  });
+
+  // Openings whose wall was removed
+  const wallIds = new Set(state.walls.map(w => w.id));
+  state.openings = state.openings.filter(op => wallIds.has(op.wallId));
+
+  // Point objects inside polygon
+  state.trees     = state.trees.filter(t  => !pointInPoly(t.x, t.y, erasePts));
+  state.furniture = state.furniture.filter(f => !pointInPoly((f.x1+f.x2)/2, (f.y1+f.y2)/2, erasePts));
+  state.stairs    = state.stairs.filter(st => (st.floor ?? 0) !== activeFloor || !pointInPoly(st.x, st.y, erasePts));
 }
 
 // ── FLOOD FILL ─────────────────────────────────────────────
