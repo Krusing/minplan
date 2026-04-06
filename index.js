@@ -1100,7 +1100,11 @@ function setup3DControls() {
     if (e.code === 'Space') { spaceDown = true; e.preventDefault(); }
     if (e.code.startsWith('Arrow')) e.preventDefault();
     if (e.code === 'Escape' && fpsMode) setFpsMode(false);
-    if (e.code === 'Escape' && state.polyPts.length > 0) { state.polyPts = []; updateStatus(); }
+    if (e.code === 'Escape') {
+      if (state.wallStart)          { state.wallStart = null; updateStatus(); }
+      if (state.rectStart !== null) { state.rectStart = null; }
+      if (state.polyPts.length > 0) { state.polyPts = [];    updateStatus(); }
+    }
   });
   window.addEventListener('keyup', (e) => {
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') shiftDown = false;
@@ -1490,9 +1494,10 @@ canvas2d.addEventListener('mousemove', (e) => {
   const { mx, my } = getCanvasXY(e);
 
   if (state.isPanning) {
-    state.panX += mx - state.panSX;
-    state.panY += my - state.panSY;
+    const dx = mx - state.panSX, dy = my - state.panSY;
+    state.panX += dx; state.panY += dy;
     state.panSX = mx; state.panSY = my;
+    if (e.buttons & 2) state._rightDragDist = (state._rightDragDist ?? 0) + Math.hypot(dx, dy);
     if (state.tool === 'pan') canvas2d.style.cursor = 'grabbing';
     return;
   }
@@ -1541,7 +1546,7 @@ canvas2d.addEventListener('mousedown', (e) => {
 
   if (e.button === 1 || e.button === 2 || (e.button === 0 && e.altKey) || (e.button === 0 && state.tool === 'pan')) {
     state.isPanning = true; state.panSX = mx; state.panSY = my;
-    if (e.button === 2) state._rightPanActive = true;
+    if (e.button === 2) state._rightDragDist = 0;
     e.preventDefault(); return;
   }
   if (e.button !== 0) return;
@@ -1742,8 +1747,10 @@ canvas2d.addEventListener('mouseup',   (e) => { if (e.button === 1 || state.isPa
 canvas2d.addEventListener('mouseleave', ()  => { state.hoverPt = null; state.isPanning = false; state.openingPreview = null; });
 canvas2d.addEventListener('contextmenu', (e) => {
   e.preventDefault();
-  if (state._rightPanActive) { state._rightPanActive = false; state.isPanning = false; return; }
-  if (state.tool === 'wall')   { state.wallStart = null; updateStatus(); }
+  state.isPanning = false;
+  if ((state._rightDragDist ?? 0) > 5) { state._rightDragDist = 0; return; } // was a pan drag
+  state._rightDragDist = 0;
+  if (state.tool === 'wall')    { state.wallStart = null; updateStatus(); }
   if (state.rectStart !== null) { state.rectStart = null; }
   if (state.polyPts.length > 0) { state.polyPts = []; updateStatus(); }
 });
