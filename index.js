@@ -662,7 +662,7 @@ function updateCameraMovement(dt) {
   }
   if (collisionOn) resolveCollision();
   updateCamera();
-  scheduleSave();
+  saveSession();
 }
 
 function setup3DControls() {
@@ -1276,7 +1276,7 @@ canvas2d.addEventListener('mousedown', (e) => {
   }
 
   updateStatus();
-  scheduleSave();
+  saveSession();
 });
 
 canvas2d.addEventListener('mouseup',   (e) => { if (e.button === 1 || state.isPanning) state.isPanning = false; });
@@ -1425,7 +1425,7 @@ document.getElementById('btn-add-floor').addEventListener('click', () => {
   state.activeFloor = state.floorDefs.length - 1;
   state.dirty3d     = true;
   renderFloorSelector();
-  scheduleSave();
+  saveSession();
 });
 
 document.getElementById('btn-del-floor').addEventListener('click', () => {
@@ -1440,7 +1440,7 @@ document.getElementById('btn-del-floor').addEventListener('click', () => {
   state.activeFloor = Math.max(0, state.activeFloor - 1);
   state.dirty3d     = true;
   renderFloorSelector();
-  scheduleSave();
+  saveSession();
 });
 
 document.getElementById('btn-center-camera').addEventListener('click', () => {
