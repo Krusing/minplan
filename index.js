@@ -119,20 +119,29 @@ function renderColorUI(uiEl, colorInputId, palette, recent, removeMode, onSelect
   }
 
   // Bottom row: custom picker + remove button
+  // NOTE: we create a fresh <input type="color"> each render instead of moving the
+  // hidden original, because uiEl.innerHTML='' would delete the original element
+  // from the DOM on subsequent refreshes, causing getElementById to return null.
   const bot = document.createElement('div');
   bot.className = 'color-ui-bottom';
   const customLbl = document.createElement('span');
   customLbl.textContent = 'Anpassad';
   customLbl.style.cssText = 'font-size:10px;color:var(--text-muted);flex:1;';
-  const colorInp = document.getElementById(colorInputId);
-  colorInp.style.display = '';
-  colorInp.onchange = () => onSelect(colorInp.value);
+  const colorPicker = document.createElement('input');
+  colorPicker.type = 'color';
+  colorPicker.value = currentColor;
+  colorPicker.style.cssText = 'width:26px;height:20px;padding:0;border:1px solid var(--border);border-radius:3px;cursor:pointer;background:none;flex-shrink:0;';
+  colorPicker.oninput = (ev) => {
+    const orig = document.getElementById(colorInputId);
+    if (orig) orig.value = ev.target.value;
+    onSelect(ev.target.value);
+  };
   const removeBtn = document.createElement('button');
   removeBtn.className = 'action-btn color-remove-btn' + (removeMode ? ' remove-active' : '');
   removeBtn.textContent = '✕ Ta bort';
   removeBtn.onclick = onRemoveToggle;
   bot.appendChild(customLbl);
-  bot.appendChild(colorInp);
+  bot.appendChild(colorPicker);
   bot.appendChild(removeBtn);
   uiEl.appendChild(bot);
 }
