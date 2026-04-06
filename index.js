@@ -1469,7 +1469,8 @@ document.getElementById('btn-clear').addEventListener('click', () => {
   state.dirty3d    = true;
   renderFloorSelector();
   updateStatus();
-  scheduleSave();
+  clearTimeout(_saveTimer);
+  saveSession();
 });
 
 function updateStatus() {
