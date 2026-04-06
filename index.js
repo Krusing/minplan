@@ -1552,9 +1552,21 @@ function rebuild3D() {
     const fd       = state.floorDefs[floorIdx] ?? state.floorDefs[0];
     const wallH    = fd.wallHeight;
     const wallMat  = new THREE.MeshLambertMaterial({ color: w.color ? new THREE.Color(w.color) : 0xf5f0e8 });
-    // Find foundation under wall midpoint and add its height as base offset
+    // Find foundation under wall midpoint (including boundary) and add its height
     const wmx = (w.x1 + w.x2) / 2, wmy = (w.y1 + w.y2) / 2;
-    const foundUnder = state.foundations.find(fn => fn.rings?.[0] && pointInPoly(wmx, wmy, fn.rings[0]));
+    const foundUnder = state.foundations.find(fn => {
+      if (!fn.rings?.[0]) return false;
+      if (pointInPoly(wmx, wmy, fn.rings[0])) return true;
+      const ring = fn.rings[0], n = ring.length;
+      for (let i = 0; i < n; i++) {
+        const a = ring[i], b = ring[(i+1)%n];
+        const ex = b.x-a.x, ey = b.y-a.y, lenE = ex*ex+ey*ey;
+        if (lenE < 0.0001) continue;
+        const t = Math.max(0, Math.min(1, ((wmx-a.x)*ex+(wmy-a.y)*ey)/lenE));
+        if (Math.hypot(wmx-(a.x+t*ex), wmy-(a.y+t*ey)) < 0.05) return true;
+      }
+      return false;
+    });
     const yOff = floorYOffset(floorIdx) + (foundUnder ? foundUnder.height : 0);
     buildWallMeshes(w, wallMat, yOff, wallH);
   }
