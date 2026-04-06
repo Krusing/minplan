@@ -665,7 +665,7 @@ function setup3DControls() {
 
   el.addEventListener('mousedown', (e) => {
     if (e.button === 2) { el.requestPointerLock({ unadjustedMovement: true }); e.preventDefault(); }
-    if (e.button === 0 && spaceDown) spacePanActive = true;
+    if (e.button === 0 && (spaceDown || state.tool === 'pan')) spacePanActive = true;
   });
 
   document.addEventListener('pointerlockchange', () => {
@@ -690,7 +690,7 @@ function setup3DControls() {
 
   window.addEventListener('mouseup', (e) => {
     if (e.button === 2) { document.exitPointerLock(); saveSession(); }
-    if (e.button === 0) spacePanActive = false;
+    if (e.button === 0) { if (spacePanActive) saveSession(); spacePanActive = false; }
   });
   el.addEventListener('contextmenu', (e) => e.preventDefault());
 
