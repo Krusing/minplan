@@ -26,7 +26,7 @@ const state = {
   floors3d:       [],    // [{id, rings:[[{x,y}],...], color, floor}]  rings[0]=outer, rings[1+]=inner holes
   fillFloors:     [],    // [{id, cells:[{x,y}], color, floor}] (legacy – rendered but not created)
   furniture:      [],    // [{id, x1, y1, x2, y2, height, label, rotation}]
-  foundations:    [],    // [{id, points:[{x,y}], height}]
+  foundations:    [],    // [{id, rings:[[{x,y}],...], height}]
   stairs:         [],    // [{id, x, y, rotation, steps, stepLen, width, floor}]
   floorDefs:      [{id: 0, name: 'BV', wallHeight: 2.6}], // floor definitions
   activeFloor:    0,     // index into floorDefs
@@ -194,6 +194,55 @@ function gridToScreen(gx, gy) {
 // Try to merge new wall segment with a collinear neighbour on the same floor.
 // Returns true if merged, false if a new wall was pushed instead.
 function addWall(x1, y1, x2, y2, floor, color) {
+  // Clip wall to foundation boundaries — walls may not extend outside any foundation
+  const segments = clipWallToFoundations(x1, y1, x2, y2);
+  for (const seg of segments) {
+    addWallSegment(seg.x1, seg.y1, seg.x2, seg.y2, floor, color);
+  }
+}
+
+// Clip a wall segment to the union of all foundation polygons.
+// Returns array of {x1,y1,x2,y2} sub-segments that lie inside a foundation.
+function clipWallToFoundations(x1, y1, x2, y2) {
+  if (state.foundations.length === 0) {
+    return [{ x1, y1, x2, y2 }]; // no foundations → no restriction
+  }
+  const dx = x2 - x1, dy = y2 - y1;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq < 0.0001) return [];
+
+  // Collect all t values [0,1] where wall crosses any foundation edge
+  const ts = [0, 1];
+  for (const fd of state.foundations) {
+    if (!fd.rings?.[0]) continue;
+    for (const ring of fd.rings) {
+      const n = ring.length;
+      for (let i = 0; i < n; i++) {
+        const p = ring[i], q = ring[(i + 1) % n];
+        const ex = q.x - p.x, ey = q.y - p.y;
+        const denom = dx * ey - dy * ex;
+        if (Math.abs(denom) < 0.0001) continue;
+        const t = ((p.x - x1) * ey - (p.y - y1) * ex) / denom;
+        const u = ((p.x - x1) * dy - (p.y - y1) * dx) / denom;
+        if (t > 0.0001 && t < 0.9999 && u >= 0 && u <= 1) ts.push(t);
+      }
+    }
+  }
+  ts.sort((a, b) => a - b);
+
+  const result = [];
+  for (let i = 0; i < ts.length - 1; i++) {
+    const tA = ts[i], tB = ts[i + 1];
+    if (tB - tA < 0.0001) continue;
+    const mx = x1 + (tA + tB) / 2 * dx, my = y1 + (tA + tB) / 2 * dy;
+    // Keep only sub-segments whose midpoint is inside at least one foundation
+    const inside = state.foundations.some(fd => fd.rings?.[0] && pointInPoly(mx, my, fd.rings[0]));
+    if (inside) result.push({ x1: x1 + tA * dx, y1: y1 + tA * dy, x2: x1 + tB * dx, y2: y1 + tB * dy });
+  }
+  return result;
+}
+
+function addWallSegment(x1, y1, x2, y2, floor, color) {
   const dx = x2 - x1, dy = y2 - y1;
   for (const w of state.walls) {
     if ((w.floor ?? 0) !== floor) continue;
@@ -304,8 +353,9 @@ function subtractPolyFromCollection(items, clipPts, floorLevel) {
 // Subtract erase polygon from all overlapping floors/gardens on the given floor level.
 function eraseAreaPolygon(erasePts, activeFloor) {
   // Surfaces
-  state.floors3d = subtractPolyFromCollection(state.floors3d, erasePts, activeFloor);
-  state.gardens  = subtractPolyFromCollection(state.gardens,  erasePts, null);
+  state.floors3d    = subtractPolyFromCollection(state.floors3d,    erasePts, activeFloor);
+  state.gardens     = subtractPolyFromCollection(state.gardens,     erasePts, null);
+  state.foundations = subtractPolyFromCollection(state.foundations, erasePts, null);
 
   // Walls: clip each wall to the part(s) lying OUTSIDE the erase polygon
   const newWalls = [];
@@ -766,17 +816,18 @@ function draw2D() {
   for (let y = sy0; y <= sy1; y++) { if (y % 2 === 0) { const py = y * g + state.panY; ctx.moveTo(0, py); ctx.lineTo(W, py); } }
   ctx.stroke();
 
-  // Foundations
   // Foundations (polygon)
   for (const fd of state.foundations) {
-    if (!fd.points || fd.points.length < 3) continue;
+    if (!fd.rings?.[0] || fd.rings[0].length < 3) continue;
     ctx.beginPath();
-    const p0f = gridToScreen(fd.points[0].x, fd.points[0].y);
-    ctx.moveTo(p0f.x, p0f.y);
-    for (let i = 1; i < fd.points.length; i++) { const p = gridToScreen(fd.points[i].x, fd.points[i].y); ctx.lineTo(p.x, p.y); }
-    ctx.closePath();
+    for (const ring of fd.rings) {
+      const p0f = gridToScreen(ring[0].x, ring[0].y);
+      ctx.moveTo(p0f.x, p0f.y);
+      for (let i = 1; i < ring.length; i++) { const p = gridToScreen(ring[i].x, ring[i].y); ctx.lineTo(p.x, p.y); }
+      ctx.closePath();
+    }
     ctx.fillStyle = 'rgba(160,140,110,0.40)'; ctx.strokeStyle = 'rgba(110,90,60,0.70)'; ctx.lineWidth = 1.5;
-    ctx.fill(); ctx.stroke();
+    ctx.fill('evenodd'); ctx.stroke();
   }
 
   // Foundation polygon in progress
@@ -1570,14 +1621,23 @@ function rebuild3D() {
   // Foundations (polygon extruded upward from ground)
   const foundMat = new THREE.MeshLambertMaterial({ color: 0xa08c6e, side: THREE.DoubleSide });
   for (const fd of state.foundations) {
-    if (!fd.points || fd.points.length < 3) continue;
+    if (!fd.rings?.[0] || fd.rings[0].length < 3) continue;
+    const outer = fd.rings[0];
     const shape = new THREE.Shape();
-    shape.moveTo(fd.points[0].x * UNIT, -fd.points[0].y * UNIT);
-    for (let i = 1; i < fd.points.length; i++) shape.lineTo(fd.points[i].x * UNIT, -fd.points[i].y * UNIT);
+    shape.moveTo(outer[0].x * UNIT, -outer[0].y * UNIT);
+    for (let i = 1; i < outer.length; i++) shape.lineTo(outer[i].x * UNIT, -outer[i].y * UNIT);
     shape.closePath();
+    for (let r = 1; r < fd.rings.length; r++) {
+      const hole = fd.rings[r];
+      const path = new THREE.Path();
+      path.moveTo(hole[0].x * UNIT, -hole[0].y * UNIT);
+      for (let i = 1; i < hole.length; i++) path.lineTo(hole[i].x * UNIT, -hole[i].y * UNIT);
+      path.closePath();
+      shape.holes.push(path);
+    }
     const geom = new THREE.ExtrudeGeometry(shape, { depth: fd.height, bevelEnabled: false });
     const mesh = new THREE.Mesh(geom, foundMat);
-    mesh.rotation.x    = -Math.PI / 2;  // same as floors — shape horizontal, extrudes upward (+Y)
+    mesh.rotation.x    = -Math.PI / 2;
     mesh.position.y    = 0;
     mesh.castShadow    = true;
     mesh.receiveShadow = true;
@@ -1865,13 +1925,16 @@ canvas2d.addEventListener('mousedown', (e) => {
     polyAddPoint(gpt, () => {
       const height = parseFloat(document.getElementById('foundation-height').value);
       const newPts = [...state.polyPts];
-      state.foundations = state.foundations.filter(fd => {
-        if (!fd.points) return true;
-        const cx = fd.points.reduce((s, p) => s + p.x, 0) / fd.points.length;
-        const cy = fd.points.reduce((s, p) => s + p.y, 0) / fd.points.length;
-        return !pointInPoly(cx, cy, newPts);
-      });
-      state.foundations.push({ id: state.nextId++, points: newPts, height });
+      // Subtract from existing foundations with different height, merge same height
+      const out = [];
+      for (const fd of state.foundations) {
+        if (!fd.rings?.[0]) { out.push(fd); continue; }
+        if (fd.height === height) { out.push(fd); continue; } // handle via merge below
+        out.push(...subtractPolyFromCollection([fd], newPts, null));
+      }
+      state.foundations = out;
+      state.foundations.push({ id: state.nextId++, rings: [newPts], height });
+      state.foundations = tryMergeCollection(state.foundations, (a, b) => a.height === b.height);
     });
 
   } else if (state.tool === 'floor3d') {
@@ -2245,9 +2308,12 @@ function loadSession() {
   if (!data) return;
   if (data.foundations) {
     state.foundations = data.foundations.map(fd => {
-      if (fd.x1 !== undefined && !fd.points)
-        return { id: fd.id, points: [{x:fd.x1,y:fd.y1},{x:fd.x2,y:fd.y1},{x:fd.x2,y:fd.y2},{x:fd.x1,y:fd.y2}], height: fd.height };
-      return fd;
+      if (fd.rings) return fd;
+      const pts = fd.points ?? (fd.x1 !== undefined
+        ? [{x:fd.x1,y:fd.y1},{x:fd.x2,y:fd.y1},{x:fd.x2,y:fd.y2},{x:fd.x1,y:fd.y2}]
+        : null);
+      if (!pts) return fd;
+      return { id: fd.id, rings: [pts, ...(fd.holes || [])], height: fd.height };
     });
   }
   if (data.walls) {
