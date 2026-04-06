@@ -20,9 +20,9 @@ function floorYOffset(floorIdx) {
 const state = {
   walls:          [],    // [{id, x1, y1, x2, y2, colorFront, colorBack, floor}]
   openings:       [],    // [{id, wallId, left, width, height, fromFloor, type}]
-  gardens:        [],    // [{id, points:[{x,y}]}]
+  gardens:        [],    // [{id, points:[{x,y}], holes:[[{x,y}]]}]
   trees:          [],    // [{id, x, y, radius, type}] type: 'tree'|'bush'
-  floors3d:       [],    // [{id, points:[{x,y}], color, floor}]
+  floors3d:       [],    // [{id, points:[{x,y}], holes:[[{x,y}]], color, floor}]
   fillFloors:     [],    // [{id, cells:[{x,y}], color, floor}] (legacy – rendered but not created)
   furniture:      [],    // [{id, x1, y1, x2, y2, height, label, rotation}]
   foundations:    [],    // [{id, points:[{x,y}], height}]
@@ -32,10 +32,11 @@ const state = {
   nextWallId:     1,
   nextId:         1,
 
-  tool:           'pan',  // pan | wall | erase | door | window | paint | garden | tree | floor3d | furniture
+  tool:           'pan',  // pan | wall | erase | erase-area | door | window | paint | garden | tree | floor3d | furniture
   rectStart:      null,  // {x,y} start for rectangle tools (furniture/foundation)
-  polyPts:        [],    // [{x,y}] polygon in progress (floor3d / garden)
-  wallStart:      null,   // {x,y} or null
+  polyPts:        [],    // [{x,y}] polygon in progress (floor3d / garden / erase-area)
+  wallStart:      null,   // {x,y} or null (wall draw tool)
+  eraseStart:     null,   // {x,y} or null (erase tool segment mode)
   hoverPt:        null,
   hoverWall:      -1,     // wall index (erase/placement hover)
   hoverOpening:   null,   // opening id (erase hover)
@@ -197,6 +198,55 @@ function addWall(x1, y1, x2, y2, floor, color) {
     if (w.x2 === x2 && w.y2 === y2) { w.x2 = x1; w.y2 = y1; return; }
   }
   state.walls.push({ id: state.nextWallId++, x1, y1, x2, y2, floor, color });
+}
+
+// ── ERASE HELPERS ─────────────────────────────────────────
+// Erase the collinear-overlapping portion of all walls on the active floor.
+function eraseWallSegment(ex1, ey1, ex2, ey2, floor) {
+  const newWalls = [];
+  const removedIds = new Set();
+  for (const w of state.walls) {
+    if ((w.floor ?? 0) !== floor) { newWalls.push(w); continue; }
+    const dWx = w.x2 - w.x1, dWy = w.y2 - w.y1;
+    const wLenSq = dWx * dWx + dWy * dWy;
+    if (wLenSq < 0.0001) continue;
+    // Collinearity: eraser endpoints must lie on wall's line
+    if (Math.abs(cross2d(dWx, dWy, ex1 - w.x1, ey1 - w.y1)) > 0.01 ||
+        Math.abs(cross2d(dWx, dWy, ex2 - w.x1, ey2 - w.y1)) > 0.01) {
+      newWalls.push(w); continue;
+    }
+    // Parametric projection of eraser onto wall [0,1]
+    const te1 = ((ex1 - w.x1) * dWx + (ey1 - w.y1) * dWy) / wLenSq;
+    const te2 = ((ex2 - w.x1) * dWx + (ey2 - w.y1) * dWy) / wLenSq;
+    const eMin = Math.min(te1, te2), eMax = Math.max(te1, te2);
+    if (eMax <= 0.001 || eMin >= 0.999) { newWalls.push(w); continue; } // no overlap
+    removedIds.add(w.id);
+    const keep = (tA, tB) => {
+      tA = Math.max(0, tA); tB = Math.min(1, tB);
+      if (tB - tA < 0.001) return;
+      newWalls.push({ ...w, id: state.nextWallId++,
+        x1: w.x1 + tA * dWx, y1: w.y1 + tA * dWy,
+        x2: w.x1 + tB * dWx, y2: w.y1 + tB * dWy });
+    };
+    keep(0, eMin);
+    keep(eMax, 1);
+  }
+  state.openings = state.openings.filter(op => !removedIds.has(op.wallId));
+  state.walls = newWalls;
+}
+
+// Add erase polygon as a hole in any overlapping floor/garden polygons.
+function eraseAreaPolygon(pts, floor) {
+  const overlaps = (poly) => pts.some(p => pointInPoly(p.x, p.y, poly)) ||
+                              poly.some(p => pointInPoly(p.x, p.y, pts));
+  for (const fl of state.floors3d) {
+    if ((fl.floor ?? 0) !== floor || !fl.points) continue;
+    if (overlaps(fl.points)) { fl.holes = [...(fl.holes || []), [...pts]]; }
+  }
+  for (const gd of state.gardens) {
+    if (!gd.points) continue;
+    if (overlaps(gd.points)) { gd.holes = [...(gd.holes || []), [...pts]]; }
+  }
 }
 
 // ── FLOOD FILL ─────────────────────────────────────────────
@@ -665,15 +715,17 @@ function draw2D() {
     ctx.beginPath();
     const p0 = gridToScreen(fl.points[0].x, fl.points[0].y);
     ctx.moveTo(p0.x, p0.y);
-    for (let i = 1; i < fl.points.length; i++) {
-      const p = gridToScreen(fl.points[i].x, fl.points[i].y);
-      ctx.lineTo(p.x, p.y);
-    }
+    for (let i = 1; i < fl.points.length; i++) { const p = gridToScreen(fl.points[i].x, fl.points[i].y); ctx.lineTo(p.x, p.y); }
     ctx.closePath();
+    for (const hole of (fl.holes || [])) {
+      const h0 = gridToScreen(hole[0].x, hole[0].y); ctx.moveTo(h0.x, h0.y);
+      for (let i = 1; i < hole.length; i++) { const h = gridToScreen(hole[i].x, hole[i].y); ctx.lineTo(h.x, h.y); }
+      ctx.closePath();
+    }
     ctx.fillStyle   = 'rgba(180,160,130,0.20)';
     ctx.strokeStyle = 'rgba(130,100,70,0.40)';
     ctx.lineWidth   = 1;
-    ctx.fill(); ctx.stroke();
+    ctx.fill('evenodd'); ctx.stroke();
   }
 
   // Floor polygon in progress
@@ -715,15 +767,17 @@ function draw2D() {
   for (const gd of state.gardens) {
     if (!gd.points || gd.points.length < 3) continue;
     ctx.beginPath();
-    const p0 = gridToScreen(gd.points[0].x, gd.points[0].y);
-    ctx.moveTo(p0.x, p0.y);
-    for (let i = 1; i < gd.points.length; i++) {
-      const p = gridToScreen(gd.points[i].x, gd.points[i].y);
-      ctx.lineTo(p.x, p.y);
-    }
+    const p0g = gridToScreen(gd.points[0].x, gd.points[0].y);
+    ctx.moveTo(p0g.x, p0g.y);
+    for (let i = 1; i < gd.points.length; i++) { const p = gridToScreen(gd.points[i].x, gd.points[i].y); ctx.lineTo(p.x, p.y); }
     ctx.closePath();
+    for (const hole of (gd.holes || [])) {
+      const h0 = gridToScreen(hole[0].x, hole[0].y); ctx.moveTo(h0.x, h0.y);
+      for (let i = 1; i < hole.length; i++) { const h = gridToScreen(hole[i].x, hole[i].y); ctx.lineTo(h.x, h.y); }
+      ctx.closePath();
+    }
     ctx.fillStyle = 'rgba(110,170,80,0.30)';
-    ctx.fill();
+    ctx.fill('evenodd');
   }
 
   // Garden polygon in progress
@@ -869,6 +923,39 @@ function draw2D() {
     ctx.beginPath(); ctx.moveTo(wPx / 2, lenPx * 0.8); ctx.lineTo(wPx / 2 - 4, lenPx * 0.65); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(wPx / 2, lenPx * 0.8); ctx.lineTo(wPx / 2 + 4, lenPx * 0.65); ctx.stroke();
     ctx.restore();
+  }
+
+  // Erase segment preview
+  if (state.tool === 'erase' && state.eraseStart && state.hoverPt) {
+    const end   = wallEnd(state.eraseStart, state.hoverPt);
+    const p1    = gridToScreen(state.eraseStart.x, state.eraseStart.y);
+    const p2    = gridToScreen(end.x, end.y);
+    const thick = Math.max(3, g * 0.3);
+    ctx.strokeStyle = 'rgba(192,64,64,0.55)';
+    ctx.lineWidth   = thick;
+    ctx.lineCap     = 'round';
+    ctx.setLineDash([g * 0.45, g * 0.2]);
+    ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#c05050'; ctx.beginPath(); ctx.arc(p1.x, p1.y, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#c05050'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(p2.x, p2.y, 4.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  }
+
+  // Erase-area polygon preview
+  if (state.tool === 'erase-area' && state.polyPts.length > 0 && state.hoverPt) {
+    const pts = state.polyPts;
+    const end  = wallEnd(pts[pts.length - 1], state.hoverPt);
+    const snapClose = pts.length >= 3 && Math.hypot(end.x - pts[0].x, end.y - pts[0].y) < POLY_SNAP;
+    const drawEnd   = snapClose ? pts[0] : end;
+    ctx.strokeStyle = 'rgba(192,64,64,0.7)'; ctx.lineWidth = 1.5; ctx.setLineDash([5, 3]);
+    ctx.beginPath();
+    const ep0 = gridToScreen(pts[0].x, pts[0].y); ctx.moveTo(ep0.x, ep0.y);
+    for (let i = 1; i < pts.length; i++) { const p = gridToScreen(pts[i].x, pts[i].y); ctx.lineTo(p.x, p.y); }
+    const ep = gridToScreen(drawEnd.x, drawEnd.y); ctx.lineTo(ep.x, ep.y);
+    ctx.stroke(); ctx.setLineDash([]);
+    if (snapClose) { ctx.beginPath(); ctx.arc(ep0.x, ep0.y, 7, 0, Math.PI * 2); ctx.strokeStyle = 'rgba(192,64,64,0.9)'; ctx.lineWidth = 2; ctx.stroke(); }
+    for (const pt of pts) { const sp = gridToScreen(pt.x, pt.y); ctx.beginPath(); ctx.arc(sp.x, sp.y, 3.5, 0, Math.PI * 2); ctx.fillStyle = 'rgba(192,64,64,0.8)'; ctx.fill(); }
   }
 
   // Wall drawing preview
@@ -1101,9 +1188,10 @@ function setup3DControls() {
     if (e.code.startsWith('Arrow')) e.preventDefault();
     if (e.code === 'Escape' && fpsMode) setFpsMode(false);
     if (e.code === 'Escape') {
-      if (state.wallStart)          { state.wallStart = null; updateStatus(); }
-      if (state.rectStart !== null) { state.rectStart = null; }
-      if (state.polyPts.length > 0) { state.polyPts = [];    updateStatus(); }
+      if (state.wallStart)          { state.wallStart  = null; updateStatus(); }
+      if (state.eraseStart !== null){ state.eraseStart = null; updateStatus(); }
+      if (state.rectStart !== null) { state.rectStart  = null; }
+      if (state.polyPts.length > 0) { state.polyPts    = [];   updateStatus(); }
     }
   });
   window.addEventListener('keyup', (e) => {
@@ -1422,40 +1510,46 @@ function rebuild3D() {
     }
   }
 
-  // Floor surfaces (polygon)
+  // Floor surfaces (polygon, with holes)
   for (const fl of state.floors3d) {
     if (!fl.points || fl.points.length < 3) continue;
     const yOff  = floorYOffset(fl.floor ?? 0);
     const shape = new THREE.Shape();
     shape.moveTo(fl.points[0].x * UNIT, -fl.points[0].y * UNIT);
-    for (let i = 1; i < fl.points.length; i++)
-      shape.lineTo(fl.points[i].x * UNIT, -fl.points[i].y * UNIT);
+    for (let i = 1; i < fl.points.length; i++) shape.lineTo(fl.points[i].x * UNIT, -fl.points[i].y * UNIT);
     shape.closePath();
-    const geom = new THREE.ShapeGeometry(shape);
-    const mat  = new THREE.MeshLambertMaterial({ color: new THREE.Color(fl.color) });
-    const mesh = new THREE.Mesh(geom, mat);
-    mesh.rotation.x    = -Math.PI / 2;
-    mesh.position.y    = yOff + 0.002;
-    mesh.receiveShadow    = true;
-    mesh.userData.dynamic = true;
+    for (const hole of (fl.holes || [])) {
+      const path = new THREE.Path();
+      path.moveTo(hole[0].x * UNIT, -hole[0].y * UNIT);
+      for (let i = 1; i < hole.length; i++) path.lineTo(hole[i].x * UNIT, -hole[i].y * UNIT);
+      path.closePath();
+      shape.holes.push(path);
+    }
+    const mat  = new THREE.MeshLambertMaterial({ color: new THREE.Color(fl.color ?? '#c8a46e') });
+    const mesh = new THREE.Mesh(new THREE.ShapeGeometry(shape), mat);
+    mesh.rotation.x = -Math.PI / 2; mesh.position.y = yOff + 0.002;
+    mesh.receiveShadow = true; mesh.userData.dynamic = true;
     scene.add(mesh);
   }
 
-  // Gardens (polygon)
+  // Gardens (polygon, with holes)
   const gardenMat = new THREE.MeshLambertMaterial({ color: 0x6aaa44, transparent: true, opacity: 0.7 });
   for (const gd of state.gardens) {
     if (!gd.points || gd.points.length < 3) continue;
     const shape = new THREE.Shape();
     shape.moveTo(gd.points[0].x * UNIT, -gd.points[0].y * UNIT);
-    for (let i = 1; i < gd.points.length; i++)
-      shape.lineTo(gd.points[i].x * UNIT, -gd.points[i].y * UNIT);
+    for (let i = 1; i < gd.points.length; i++) shape.lineTo(gd.points[i].x * UNIT, -gd.points[i].y * UNIT);
     shape.closePath();
-    const geom = new THREE.ShapeGeometry(shape);
-    const mesh = new THREE.Mesh(geom, gardenMat);
-    mesh.rotation.x    = -Math.PI / 2;
-    mesh.position.y    = 0.003;
-    mesh.receiveShadow    = true;
-    mesh.userData.dynamic = true;
+    for (const hole of (gd.holes || [])) {
+      const path = new THREE.Path();
+      path.moveTo(hole[0].x * UNIT, -hole[0].y * UNIT);
+      for (let i = 1; i < hole.length; i++) path.lineTo(hole[i].x * UNIT, -hole[i].y * UNIT);
+      path.closePath();
+      shape.holes.push(path);
+    }
+    const mesh = new THREE.Mesh(new THREE.ShapeGeometry(shape), gardenMat);
+    mesh.rotation.x = -Math.PI / 2; mesh.position.y = 0.003;
+    mesh.receiveShadow = true; mesh.userData.dynamic = true;
     scene.add(mesh);
   }
 }
@@ -1505,11 +1599,18 @@ canvas2d.addEventListener('mousemove', (e) => {
   state.hoverPt = screenToGrid(mx, my);
 
   if (state.tool === 'erase') {
-    // Opening takes priority over wall in erase mode
-    const opId = openingHit(mx, my);
-    state.hoverOpening = opId;
-    state.hoverWall    = opId ? -1 : wallHit(mx, my);
-    canvas2d.style.cursor = (opId || state.hoverWall >= 0) ? 'pointer' : 'default';
+    if (state.eraseStart) {
+      // Segment mode: just track hover position for preview, no object highlighting
+      state.hoverOpening = null;
+      state.hoverWall    = -1;
+      canvas2d.style.cursor = 'crosshair';
+    } else {
+      // Opening takes priority over wall in erase mode
+      const opId = openingHit(mx, my);
+      state.hoverOpening = opId;
+      state.hoverWall    = opId ? -1 : wallHit(mx, my);
+      canvas2d.style.cursor = (opId || state.hoverWall >= 0) ? 'pointer' : 'default';
+    }
 
   } else if (state.tool === 'door' || state.tool === 'window') {
     const wIdx = wallHit(mx, my);
@@ -1566,54 +1667,46 @@ canvas2d.addEventListener('mousedown', (e) => {
     }
 
   } else if (state.tool === 'erase') {
-    if (state.hoverOpening) {
-      state.openings     = state.openings.filter(op => op.id !== state.hoverOpening);
-      state.hoverOpening = null;
-      state.dirty3d      = true;
-    } else if (state.hoverWall >= 0) {
-      const wallId = state.walls[state.hoverWall].id;
-      state.openings = state.openings.filter(op => op.wallId !== wallId);
-      state.walls.splice(state.hoverWall, 1);
-      state.hoverWall = -1;
-      state.dirty3d   = true;
+    if (!state.eraseStart) {
+      // No segment started: single-click to remove openings, trees, stairs, furniture
+      if (state.hoverOpening) {
+        state.openings = state.openings.filter(op => op.id !== state.hoverOpening);
+        state.hoverOpening = null; state.dirty3d = true;
+      } else {
+        let removed = false;
+        for (let i = 0; i < state.stairs.length && !removed; i++) {
+          if (Math.hypot(gpt.x - state.stairs[i].x, gpt.y - state.stairs[i].y) <= 2) {
+            state.stairs.splice(i, 1); state.dirty3d = true; removed = true;
+          }
+        }
+        for (let i = 0; i < state.trees.length && !removed; i++) {
+          if (Math.hypot(gpt.x - state.trees[i].x, gpt.y - state.trees[i].y) <= state.trees[i].radius + 1) {
+            state.trees.splice(i, 1); state.dirty3d = true; removed = true;
+          }
+        }
+        for (let i = 0; i < state.furniture.length && !removed; i++) {
+          const f = state.furniture[i];
+          if (gpt.x >= f.x1 && gpt.x <= f.x2 && gpt.y >= f.y1 && gpt.y <= f.y2) {
+            state.furniture.splice(i, 1); state.dirty3d = true; removed = true;
+          }
+        }
+        if (!removed) {
+          // Start erase segment (like wall tool)
+          state.eraseStart = { ...gpt };
+        }
+      }
     } else {
-      // Erase stair near cursor (within 2 grid units of origin)
-      let erasedStair = false;
-      for (let i = 0; i < state.stairs.length; i++) {
-        const st = state.stairs[i];
-        if (Math.hypot(gpt.x - st.x, gpt.y - st.y) <= 2) {
-          state.stairs.splice(i, 1);
-          state.dirty3d = true;
-          erasedStair   = true;
-          break;
-        }
-      }
-      // Erase foundation / floor / garden under cursor
-      if (!erasedStair) {
-        let erased = false;
-        for (let i = 0; i < state.foundations.length; i++) {
-          const fd = state.foundations[i];
-          const hit = fd.points
-            ? pointInPoly(gpt.x, gpt.y, fd.points)
-            : (gpt.x >= fd.x1 && gpt.x <= fd.x2 && gpt.y >= fd.y1 && gpt.y <= fd.y2);
-          if (hit) { state.foundations.splice(i, 1); state.dirty3d = true; erased = true; break; }
-        }
-        if (!erased) {
-          for (let i = 0; i < state.floors3d.length; i++) {
-            if (state.floors3d[i].points && pointInPoly(gpt.x, gpt.y, state.floors3d[i].points)) {
-              state.floors3d.splice(i, 1); state.dirty3d = true; erased = true; break;
-            }
-          }
-        }
-        if (!erased) {
-          for (let i = 0; i < state.gardens.length; i++) {
-            if (state.gardens[i].points && pointInPoly(gpt.x, gpt.y, state.gardens[i].points)) {
-              state.gardens.splice(i, 1); state.dirty3d = true; break;
-            }
-          }
-        }
-      }
+      // Second click: erase wall segment collinear with eraseStart→gpt
+      const end = wallEnd(state.eraseStart, gpt);
+      eraseWallSegment(state.eraseStart.x, state.eraseStart.y, end.x, end.y, state.activeFloor);
+      state.eraseStart = null;
+      state.dirty3d = true;
     }
+
+  } else if (state.tool === 'erase-area') {
+    polyAddPoint(gpt, () => {
+      eraseAreaPolygon([...state.polyPts], state.activeFloor);
+    });
 
   } else if (state.tool === 'paint') {
     const color = document.getElementById('wall-color').value;
@@ -1750,9 +1843,10 @@ canvas2d.addEventListener('contextmenu', (e) => {
   state.isPanning = false;
   if ((state._rightDragDist ?? 0) > 5) { state._rightDragDist = 0; return; } // was a pan drag
   state._rightDragDist = 0;
-  if (state.tool === 'wall')    { state.wallStart = null; updateStatus(); }
-  if (state.rectStart !== null) { state.rectStart = null; }
-  if (state.polyPts.length > 0) { state.polyPts = []; updateStatus(); }
+  if (state.tool === 'wall')       { state.wallStart  = null; updateStatus(); }
+  if (state.eraseStart !== null)   { state.eraseStart = null; updateStatus(); }
+  if (state.rectStart !== null)    { state.rectStart  = null; }
+  if (state.polyPts.length > 0)   { state.polyPts    = [];   updateStatus(); }
 });
 canvas2d.addEventListener('dblclick', () => {
   if (state.tool === 'wall') { state.wallStart = null; updateStatus(); }
@@ -1777,10 +1871,11 @@ const windowSettingsEl  = document.getElementById('window-settings');
 document.querySelectorAll('[data-tool]').forEach(btn => {
   btn.addEventListener('click', () => {
     const tool = btn.dataset.tool;
-    state.tool      = tool;
-    state.wallStart = null;
-    state.rectStart = null;
-    state.polyPts   = [];
+    state.tool        = tool;
+    state.wallStart   = null;
+    state.eraseStart  = null;
+    state.rectStart   = null;
+    state.polyPts     = [];
     state.openingPreview = null;
 
     document.querySelectorAll('[data-tool]').forEach(b => b.classList.remove('active'));
@@ -1807,7 +1902,7 @@ document.querySelectorAll('[data-tool]').forEach(btn => {
     document.getElementById('stair-settings').classList.toggle('hidden', tool !== 'stair');
     document.getElementById('foundation-settings').classList.toggle('hidden', tool !== 'foundation');
 
-    const cursors = { pan: 'grab', wall: 'crosshair', erase: 'default', door: 'default', window: 'default', paint: 'default', foundation: 'crosshair', garden: 'crosshair', tree: 'crosshair', floor3d: 'crosshair', furniture: 'crosshair', stair: 'crosshair' };
+    const cursors = { pan: 'grab', wall: 'crosshair', erase: 'default', 'erase-area': 'crosshair', door: 'default', window: 'default', paint: 'default', foundation: 'crosshair', garden: 'crosshair', tree: 'crosshair', floor3d: 'crosshair', furniture: 'crosshair', stair: 'crosshair' };
     canvas2d.style.cursor = cursors[tool] ?? 'default';
 
     updateStatus();
@@ -1969,7 +2064,12 @@ function updateStatus() {
     wall:   state.wallStart
               ? 'Klicka för att placera slutpunkt  ·  Högerklicka = avbryt'
               : 'Klicka för att starta en vägg',
-    erase:  'Klicka på en vägg eller öppning för att ta bort den',
+    erase:  state.eraseStart
+              ? 'Klicka för att placera slutpunkt  ·  Högerklicka = avbryt'
+              : 'Klicka på objekt för att ta bort  ·  Klicka på tomt ställe = starta raderingssegment',
+    'erase-area': state.polyPts.length > 0
+              ? `${state.polyPts.length} punkter  ·  Klick nära start = stäng polygon  ·  Högerklicka = avbryt`
+              : 'Klicka för att börja rita raderingsyta',
     door:   'Håll över en vägg och klicka för att placera dörröppning',
     window: 'Håll över en vägg och klicka för att placera fönster',
     paint:  'Klicka på vägg = färga sida  ·  Shift+klick = fyll alla väggar i slutet område',
