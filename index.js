@@ -1416,8 +1416,9 @@ canvas2d.addEventListener('mousemove', (e) => {
 canvas2d.addEventListener('mousedown', (e) => {
   const { mx, my } = getCanvasXY(e);
 
-  if (e.button === 1 || (e.button === 0 && e.altKey) || (e.button === 0 && state.tool === 'pan')) {
+  if (e.button === 1 || e.button === 2 || (e.button === 0 && e.altKey) || (e.button === 0 && state.tool === 'pan')) {
     state.isPanning = true; state.panSX = mx; state.panSY = my;
+    if (e.button === 2) state._rightPanActive = true;
     e.preventDefault(); return;
   }
   if (e.button !== 0) return;
@@ -1583,6 +1584,7 @@ canvas2d.addEventListener('mouseup',   (e) => { if (e.button === 1 || state.isPa
 canvas2d.addEventListener('mouseleave', ()  => { state.hoverPt = null; state.isPanning = false; state.openingPreview = null; });
 canvas2d.addEventListener('contextmenu', (e) => {
   e.preventDefault();
+  if (state._rightPanActive) { state._rightPanActive = false; state.isPanning = false; return; }
   if (state.tool === 'wall')   { state.wallStart = null; updateStatus(); }
   if (state.rectStart !== null) { state.rectStart = null; }
   if (state.polyPts.length > 0) { state.polyPts = []; updateStatus(); }
