@@ -1722,8 +1722,11 @@ function rebuild3D() {
   // Floor surfaces (polygon, inner rings as THREE holes if erase punched through)
   for (const fl of state.floors3d) {
     if (!fl.rings?.[0] || fl.rings[0].length < 3) continue;
-    const yOff  = floorYOffset(fl.floor ?? 0);
     const outer = fl.rings[0];
+    const fcx = outer.reduce((s,p)=>s+p.x,0)/outer.length;
+    const fcz = outer.reduce((s,p)=>s+p.y,0)/outer.length;
+    const foundUnder = state.foundations.find(fn => fn.rings?.[0] && pointInPoly(fcx, fcz, fn.rings[0]));
+    const yOff  = floorYOffset(fl.floor ?? 0) + (foundUnder ? foundUnder.height : 0);
     const shape = new THREE.Shape();
     shape.moveTo(outer[0].x * UNIT, -outer[0].y * UNIT);
     for (let i = 1; i < outer.length; i++) shape.lineTo(outer[i].x * UNIT, -outer[i].y * UNIT);
