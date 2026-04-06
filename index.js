@@ -982,12 +982,15 @@ function draw2D() {
   if (state.tool === 'erase' && state.polyPts.length > 0 && state.hoverPt) {
     const pts = state.polyPts;
     const end = wallEnd(pts[pts.length - 1], state.hoverPt);
+    const snapClose = pts.length >= 3 && Math.hypot(state.hoverPt.x - pts[0].x, state.hoverPt.y - pts[0].y) < POLY_SNAP;
+    const drawEnd   = snapClose ? pts[0] : end;
     ctx.strokeStyle = 'rgba(192,64,64,0.7)'; ctx.lineWidth = 1.5; ctx.setLineDash([5, 3]);
     ctx.beginPath();
     const ep0 = gridToScreen(pts[0].x, pts[0].y); ctx.moveTo(ep0.x, ep0.y);
     for (let i = 1; i < pts.length; i++) { const p = gridToScreen(pts[i].x, pts[i].y); ctx.lineTo(p.x, p.y); }
-    const ep = gridToScreen(end.x, end.y); ctx.lineTo(ep.x, ep.y);
+    const ep = gridToScreen(drawEnd.x, drawEnd.y); ctx.lineTo(ep.x, ep.y);
     ctx.stroke(); ctx.setLineDash([]);
+    if (snapClose) { ctx.beginPath(); ctx.arc(ep0.x, ep0.y, 7, 0, Math.PI * 2); ctx.strokeStyle = 'rgba(192,64,64,0.9)'; ctx.lineWidth = 2; ctx.stroke(); }
     for (const pt of pts) { const sp = gridToScreen(pt.x, pt.y); ctx.beginPath(); ctx.arc(sp.x, sp.y, 3.5, 0, Math.PI * 2); ctx.fillStyle = 'rgba(192,64,64,0.8)'; ctx.fill(); }
   }
 
@@ -1729,6 +1732,11 @@ canvas2d.addEventListener('mousedown', (e) => {
           updateStatus();
         }
       }
+    } else if (state.polyPts.length >= 3 &&
+               Math.hypot(gpt.x - state.polyPts[0].x, gpt.y - state.polyPts[0].y) < POLY_SNAP) {
+      // Close polygon near start → area erase immediately
+      eraseAreaPolygon([...state.polyPts], state.activeFloor);
+      state.polyPts = []; state.dirty3d = true; updateStatus();
     } else {
       // Add next point
       const last = state.polyPts[state.polyPts.length - 1];
@@ -2113,7 +2121,7 @@ function updateStatus() {
               ? 'Klicka för att placera slutpunkt  ·  Högerklicka = avbryt'
               : 'Klicka för att starta en vägg',
     erase:  state.polyPts.length > 0
-              ? `${state.polyPts.length} punkter  ·  Klicka för fler punkter  ·  Högerklicka = radera`
+              ? `${state.polyPts.length} punkter  ·  Klicka för fler  ·  Klick nära start = stäng yta  ·  Högerklicka = radera`
               : 'Klicka på öppning/möbel = ta bort  ·  Klicka på tomt = starta linje/yta',
     door:   'Håll över en vägg och klicka för att placera dörröppning',
     window: 'Håll över en vägg och klicka för att placera fönster',
