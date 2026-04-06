@@ -1552,13 +1552,23 @@ function rebuild3D() {
     const fd       = state.floorDefs[floorIdx] ?? state.floorDefs[0];
     const wallH    = fd.wallHeight;
     const wallMat  = new THREE.MeshLambertMaterial({ color: w.color ? new THREE.Color(w.color) : 0xf5f0e8 });
-    // Find foundation this wall belongs to by sampling along it
+    // Find foundation this wall belongs to
+    // A wall may run exactly along a foundation edge so pointInPoly returns false —
+    // also check if the wall midpoint is on or very near any foundation ring edge.
+    const wmx = (w.x1 + w.x2) / 2, wmy = (w.y1 + w.y2) / 2;
     const foundUnder = state.foundations.find(fn => {
       if (!fn.rings?.[0]) return false;
-      for (let s = 0; s <= 4; s++) {
-        const t = s / 4;
-        const sx = w.x1 + t * (w.x2 - w.x1), sy = w.y1 + t * (w.y2 - w.y1);
-        if (pointInPoly(sx, sy, fn.rings[0])) return true;
+      if (pointInPoly(wmx, wmy, fn.rings[0])) return true;
+      // Check proximity to every ring edge
+      for (const ring of fn.rings) {
+        const n = ring.length;
+        for (let i = 0; i < n; i++) {
+          const a = ring[i], b = ring[(i+1)%n];
+          const ex = b.x-a.x, ey = b.y-a.y, len2 = ex*ex+ey*ey;
+          if (len2 < 0.0001) continue;
+          const t = Math.max(0, Math.min(1, ((wmx-a.x)*ex+(wmy-a.y)*ey)/len2));
+          if (Math.hypot(wmx-(a.x+t*ex), wmy-(a.y+t*ey)) < 0.1) return true;
+        }
       }
       return false;
     });
