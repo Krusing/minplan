@@ -917,6 +917,7 @@ function setup3DControls() {
   let spacePanActive = false;
 
   el.addEventListener('mousedown', (e) => {
+    el.focus();
     if (e.button === 2) { el.requestPointerLock({ unadjustedMovement: true }); e.preventDefault(); }
     if (e.button === 0 && (spaceDown || state.tool === 'pan')) spacePanActive = true;
   });
@@ -1118,6 +1119,7 @@ function init3D() {
   renderer.shadowMap.type    = THREE.PCFSoftShadowMap;
   renderer.setClearColor(0xf0ebe3);
   container.appendChild(renderer.domElement);
+  renderer.domElement.tabIndex = 0;
 
   scene = new THREE.Scene();
   scene.fog = new THREE.Fog(0xf0ebe3, 25, 60);
@@ -1414,6 +1416,7 @@ canvas2d.addEventListener('mousemove', (e) => {
 });
 
 canvas2d.addEventListener('mousedown', (e) => {
+  canvas2d.focus();
   const { mx, my } = getCanvasXY(e);
 
   if (e.button === 1 || e.button === 2 || (e.button === 0 && e.altKey) || (e.button === 0 && state.tool === 'pan')) {
