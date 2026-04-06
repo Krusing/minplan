@@ -662,7 +662,6 @@ function updateCameraMovement(dt) {
   }
   if (collisionOn) resolveCollision();
   updateCamera();
-  saveSession();
 }
 
 function setup3DControls() {
@@ -693,8 +692,10 @@ function setup3DControls() {
     }
   });
 
+  const MOVE_KEYS = new Set(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','KeyQ','KeyE','KeyZ','KeyX']);
+
   window.addEventListener('mouseup', (e) => {
-    if (e.button === 2) document.exitPointerLock();
+    if (e.button === 2) { document.exitPointerLock(); saveSession(); }
     if (e.button === 0) spacePanActive = false;
   });
   el.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -729,6 +730,7 @@ function setup3DControls() {
     if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') shiftDown = false;
     keys[e.code] = false;
     if (e.code === 'Space') spaceDown = false;
+    if (MOVE_KEYS.has(e.code)) saveSession();
   });
 }
 
