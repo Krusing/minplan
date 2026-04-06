@@ -1638,18 +1638,15 @@ canvas2d.addEventListener('mousemove', (e) => {
   state.hoverPt = screenToGrid(mx, my);
 
   if (state.tool === 'erase') {
-    if (state.polyPts.length > 0) {
-      // Polygon in progress: no object highlighting, just crosshair
-      state.hoverOpening = null;
-      state.hoverWall    = -1;
-      canvas2d.style.cursor = 'crosshair';
-    } else {
-      // Opening takes priority over wall in erase mode
-      const opId = openingHit(mx, my);
-      state.hoverOpening = opId;
-      state.hoverWall    = opId ? -1 : wallHit(mx, my);
-      canvas2d.style.cursor = (opId || state.hoverWall >= 0) ? 'pointer' : 'default';
-    }
+    // Only highlight openings (and point objects) — walls are not click-to-delete
+    const opId = state.polyPts.length === 0 ? openingHit(mx, my) : null;
+    state.hoverOpening = opId;
+    state.hoverWall    = -1;
+    canvas2d.style.cursor = (opId || (state.polyPts.length === 0 && (
+      state.stairs.some(s => Math.hypot(screenToGrid(mx,my).x - s.x, screenToGrid(mx,my).y - s.y) <= 2) ||
+      state.trees.some(t  => Math.hypot(screenToGrid(mx,my).x - t.x, screenToGrid(mx,my).y - t.y) <= t.radius + 1) ||
+      state.furniture.some(f => { const g = screenToGrid(mx,my); return g.x>=f.x1&&g.x<=f.x2&&g.y>=f.y1&&g.y<=f.y2; })
+    ))) ? 'pointer' : 'crosshair';
 
   } else if (state.tool === 'door' || state.tool === 'window') {
     const wIdx = wallHit(mx, my);
@@ -1707,18 +1704,12 @@ canvas2d.addEventListener('mousedown', (e) => {
 
   } else if (state.tool === 'erase') {
     if (state.polyPts.length === 0) {
-      // No polygon started: single-click to remove objects
+      // Click on opening/stair/tree/furniture → delete immediately
       if (state.hoverOpening) {
         state.openings = state.openings.filter(op => op.id !== state.hoverOpening);
         state.hoverOpening = null; state.dirty3d = true;
       } else {
         let removed = false;
-        if (state.hoverWall >= 0) {
-          // Clicked directly on a wall → split/remove it
-          const w = state.walls[state.hoverWall];
-          eraseWallSegment(w.x1, w.y1, w.x2, w.y2, state.activeFloor);
-          state.hoverWall = -1; state.dirty3d = true; removed = true;
-        }
         for (let i = 0; i < state.stairs.length && !removed; i++) {
           if (Math.hypot(gpt.x - state.stairs[i].x, gpt.y - state.stairs[i].y) <= 2) {
             state.stairs.splice(i, 1); state.dirty3d = true; removed = true;
@@ -1736,25 +1727,23 @@ canvas2d.addEventListener('mousedown', (e) => {
           }
         }
         if (!removed) {
-          // Start polygon erase
+          // Start draw polygon — works for both walls and areas
           state.polyPts = [{ ...gpt }];
           updateStatus();
         }
       }
     } else if (state.polyPts.length >= 2 &&
                Math.hypot(gpt.x - state.polyPts[0].x, gpt.y - state.polyPts[0].y) < POLY_SNAP) {
-      // Close polygon
+      // Close: 2-pt line → wall segment erase; 3+ pts → area erase
       if (state.polyPts.length === 2) {
-        // Two-point segment → wall segment erase
         const end = wallEnd(state.polyPts[0], state.polyPts[1]);
         eraseWallSegment(state.polyPts[0].x, state.polyPts[0].y, end.x, end.y, state.activeFloor);
       } else {
-        // Three or more points → area erase
         eraseAreaPolygon([...state.polyPts], state.activeFloor);
       }
       state.polyPts = []; state.dirty3d = true; updateStatus();
     } else {
-      // Add next polygon point
+      // Add next point
       const last = state.polyPts[state.polyPts.length - 1];
       const end  = wallEnd(last, gpt);
       if (end.x !== last.x || end.y !== last.y) {
