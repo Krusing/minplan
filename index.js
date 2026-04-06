@@ -978,19 +978,16 @@ function draw2D() {
     ctx.restore();
   }
 
-  // Erase polygon preview (covers both 2-pt segment and 3+-pt area mode)
+  // Erase polygon preview
   if (state.tool === 'erase' && state.polyPts.length > 0 && state.hoverPt) {
     const pts = state.polyPts;
-    const end  = wallEnd(pts[pts.length - 1], state.hoverPt);
-    const snapClose = pts.length >= 2 && Math.hypot(state.hoverPt.x - pts[0].x, state.hoverPt.y - pts[0].y) < POLY_SNAP;
-    const drawEnd   = snapClose ? pts[0] : end;
+    const end = wallEnd(pts[pts.length - 1], state.hoverPt);
     ctx.strokeStyle = 'rgba(192,64,64,0.7)'; ctx.lineWidth = 1.5; ctx.setLineDash([5, 3]);
     ctx.beginPath();
     const ep0 = gridToScreen(pts[0].x, pts[0].y); ctx.moveTo(ep0.x, ep0.y);
     for (let i = 1; i < pts.length; i++) { const p = gridToScreen(pts[i].x, pts[i].y); ctx.lineTo(p.x, p.y); }
-    const ep = gridToScreen(drawEnd.x, drawEnd.y); ctx.lineTo(ep.x, ep.y);
+    const ep = gridToScreen(end.x, end.y); ctx.lineTo(ep.x, ep.y);
     ctx.stroke(); ctx.setLineDash([]);
-    if (snapClose) { ctx.beginPath(); ctx.arc(ep0.x, ep0.y, 7, 0, Math.PI * 2); ctx.strokeStyle = 'rgba(192,64,64,0.9)'; ctx.lineWidth = 2; ctx.stroke(); }
     for (const pt of pts) { const sp = gridToScreen(pt.x, pt.y); ctx.beginPath(); ctx.arc(sp.x, sp.y, 3.5, 0, Math.PI * 2); ctx.fillStyle = 'rgba(192,64,64,0.8)'; ctx.fill(); }
   }
 
@@ -1727,21 +1724,11 @@ canvas2d.addEventListener('mousedown', (e) => {
           }
         }
         if (!removed) {
-          // Start draw polygon — works for both walls and areas
+          // Start draw — every subsequent click adds a point, right-click executes
           state.polyPts = [{ ...gpt }];
           updateStatus();
         }
       }
-    } else if (state.polyPts.length >= 2 &&
-               Math.hypot(gpt.x - state.polyPts[0].x, gpt.y - state.polyPts[0].y) < POLY_SNAP) {
-      // Close: 2-pt line → wall segment erase; 3+ pts → area erase
-      if (state.polyPts.length === 2) {
-        const end = wallEnd(state.polyPts[0], state.polyPts[1]);
-        eraseWallSegment(state.polyPts[0].x, state.polyPts[0].y, end.x, end.y, state.activeFloor);
-      } else {
-        eraseAreaPolygon([...state.polyPts], state.activeFloor);
-      }
-      state.polyPts = []; state.dirty3d = true; updateStatus();
     } else {
       // Add next point
       const last = state.polyPts[state.polyPts.length - 1];
@@ -1895,6 +1882,17 @@ canvas2d.addEventListener('contextmenu', (e) => {
   state.isPanning = false;
   if ((state._rightDragDist ?? 0) > 5) { state._rightDragDist = 0; return; } // was a pan drag
   state._rightDragDist = 0;
+  if (state.tool === 'erase' && state.polyPts.length >= 2) {
+    // Right-click executes the erase: line → wall segment, polygon → area
+    if (state.polyPts.length === 2) {
+      const end = wallEnd(state.polyPts[0], state.polyPts[1]);
+      eraseWallSegment(state.polyPts[0].x, state.polyPts[0].y, end.x, end.y, state.activeFloor);
+    } else {
+      eraseAreaPolygon([...state.polyPts], state.activeFloor);
+    }
+    state.polyPts = []; state.dirty3d = true; updateStatus();
+    return;
+  }
   if (state.tool === 'wall')       { state.wallStart = null; updateStatus(); }
   if (state.rectStart !== null)    { state.rectStart = null; }
   if (state.polyPts.length > 0)   { state.polyPts   = [];   updateStatus(); }
@@ -2115,8 +2113,8 @@ function updateStatus() {
               ? 'Klicka för att placera slutpunkt  ·  Högerklicka = avbryt'
               : 'Klicka för att starta en vägg',
     erase:  state.polyPts.length > 0
-              ? `${state.polyPts.length} punkter  ·  Klick nära start = stäng  ·  Högerklicka = avbryt`
-              : 'Klicka på objekt för att ta bort  ·  Klicka på tomt = rita raderingsyta',
+              ? `${state.polyPts.length} punkter  ·  Klicka för fler punkter  ·  Högerklicka = radera`
+              : 'Klicka på öppning/möbel = ta bort  ·  Klicka på tomt = starta linje/yta',
     door:   'Håll över en vägg och klicka för att placera dörröppning',
     window: 'Håll över en vägg och klicka för att placera fönster',
     paint:  'Klicka på vägg = färga sida  ·  Shift+klick = fyll alla väggar i slutet område',
