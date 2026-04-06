@@ -2191,17 +2191,46 @@ function renderFloorSelector() {
   const el = document.getElementById('floor-selector');
   el.innerHTML = '';
   state.floorDefs.forEach((fd, i) => {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex;align-items:center;gap:4px;padding:1px 6px;';
+
     const btn = document.createElement('button');
     btn.className = 'tool-btn' + (i === state.activeFloor ? ' active' : '');
-    btn.style.fontSize = '11px';
-    btn.textContent   = fd.name;
-    btn.title         = `Vägghöjd: ${fd.wallHeight} m`;
+    btn.style.cssText = 'font-size:11px;flex:1;padding:5px 6px;';
+    btn.textContent = fd.name;
     btn.addEventListener('click', () => {
       state.activeFloor = i;
       state.wallStart   = null;
       renderFloorSelector();
     });
-    el.appendChild(btn);
+
+    const heightInput = document.createElement('input');
+    heightInput.type  = 'number';
+    heightInput.value = fd.wallHeight;
+    heightInput.min   = '1.0';
+    heightInput.max   = '6.0';
+    heightInput.step  = '0.1';
+    heightInput.title = 'Vägghöjd (m)';
+    heightInput.style.cssText = 'width:42px;font-size:11px;padding:3px 4px;border:1px solid var(--border);border-radius:4px;background:var(--surface);text-align:right;';
+    heightInput.addEventListener('change', () => {
+      const v = parseFloat(heightInput.value);
+      if (!isNaN(v) && v >= 1.0 && v <= 6.0) {
+        state.floorDefs[i].wallHeight = v;
+        state.dirty3d = true;
+        saveSession();
+      }
+    });
+    // Prevent floor-switch when clicking the input
+    heightInput.addEventListener('click', e => e.stopPropagation());
+
+    const unit = document.createElement('span');
+    unit.textContent = 'm';
+    unit.style.cssText = 'font-size:11px;color:var(--text-muted);';
+
+    wrap.appendChild(btn);
+    wrap.appendChild(heightInput);
+    wrap.appendChild(unit);
+    el.appendChild(wrap);
   });
 }
 
