@@ -277,32 +277,35 @@ function tryMergeCollection(items, matchFn) {
   return items;
 }
 
+// Subtract clipPts polygon from a collection of ring-based items.
+// floorLevel: if set, only process items on that floor level; if null, process all.
+function subtractPolyFromCollection(items, clipPts, floorLevel) {
+  const clip = [clipPts.map(p => [p.x, p.y])];
+  const out = [];
+  for (const item of items) {
+    if (!item.rings?.[0]) { out.push(item); continue; }
+    if (floorLevel !== null && floorLevel !== undefined && (item.floor ?? 0) !== floorLevel) {
+      out.push(item); continue;
+    }
+    const outer = item.rings[0];
+    const overlaps = clipPts.some(p => pointInPoly(p.x, p.y, outer)) ||
+                     outer.some(p => pointInPoly(p.x, p.y, clipPts));
+    if (!overlaps) { out.push(item); continue; }
+    const result = polygonClipping.difference(toClipPoly(item.rings), clip);
+    let first = true;
+    for (const poly of result) {
+      out.push({ ...item, id: first ? item.id : state.nextId++, rings: fromClipPoly(poly) });
+      first = false;
+    }
+    // result empty → fully covered, remove
+  }
+  return out;
+}
+
 // Subtract erase polygon from all overlapping floors/gardens on the given floor level.
 function eraseAreaPolygon(erasePts, activeFloor) {
-  const eraseClip = [erasePts.map(p => [p.x, p.y])];
-
-  function processCollection(items, useFloorCheck) {
-    const out = [];
-    for (const item of items) {
-      if (!item.rings?.[0]) { out.push(item); continue; }
-      if (useFloorCheck && (item.floor ?? 0) !== activeFloor) { out.push(item); continue; }
-      const outer = item.rings[0];
-      const overlaps = erasePts.some(p => pointInPoly(p.x, p.y, outer)) ||
-                       outer.some(p => pointInPoly(p.x, p.y, erasePts));
-      if (!overlaps) { out.push(item); continue; }
-      const result = polygonClipping.difference(toClipPoly(item.rings), eraseClip);
-      let first = true;
-      for (const poly of result) {
-        out.push({ ...item, id: first ? item.id : state.nextId++, rings: fromClipPoly(poly) });
-        first = false;
-      }
-      // result.length === 0 → fully erased, don't push
-    }
-    return out;
-  }
-
-  state.floors3d = processCollection(state.floors3d, true);
-  state.gardens  = processCollection(state.gardens,  false);
+  state.floors3d = subtractPolyFromCollection(state.floors3d, erasePts, activeFloor);
+  state.gardens  = subtractPolyFromCollection(state.gardens,  erasePts, null);
 }
 
 // ── FLOOD FILL ─────────────────────────────────────────────
@@ -1848,22 +1851,19 @@ canvas2d.addEventListener('mousedown', (e) => {
       polyAddPoint(gpt, () => {
         const color = document.getElementById('floor3d-color').value;
         const newPts  = [...state.polyPts];
-        const newClip = [newPts.map(p => [p.x, p.y])];
         // Subtract new polygon from any different-color floor on the same level
         const out = [];
         for (const fl of state.floors3d) {
           if (!fl.rings?.[0] || (fl.floor ?? 0) !== state.activeFloor || fl.color === color) {
             out.push(fl); continue;
           }
-          const result = polygonClipping.difference(toClipPoly(fl.rings), newClip);
-          let first = true;
-          for (const poly of result) {
-            out.push({ ...fl, id: first ? fl.id : state.nextId++, rings: fromClipPoly(poly) });
-            first = false;
-          }
-          // result empty → existing floor fully covered by new one, remove it
+          out.push(...subtractPolyFromCollection([fl], newPts, state.activeFloor));
         }
         state.floors3d = out;
+        // If drawing on ground floor, subtract new polygon from gardens too
+        if (state.activeFloor === 0) {
+          state.gardens = subtractPolyFromCollection(state.gardens, newPts, null);
+        }
         state.floors3d.push({ id: state.nextId++, rings: [newPts], color, floor: state.activeFloor });
         // Merge same-color adjacent/overlapping floors
         state.floors3d = tryMergeCollection(state.floors3d,
@@ -1875,12 +1875,9 @@ canvas2d.addEventListener('mousedown', (e) => {
   } else if (state.tool === 'garden') {
     polyAddPoint(gpt, () => {
       const newPts = [...state.polyPts];
-      state.gardens = state.gardens.filter(gd => {
-        if (!gd.rings?.[0]) return true;
-        const cx = gd.rings[0].reduce((s, p) => s + p.x, 0) / gd.rings[0].length;
-        const cy = gd.rings[0].reduce((s, p) => s + p.y, 0) / gd.rings[0].length;
-        return !pointInPoly(cx, cy, newPts);
-      });
+      // Subtract from existing gardens and from floors on ground level
+      state.gardens  = subtractPolyFromCollection(state.gardens,  newPts, null);
+      state.floors3d = subtractPolyFromCollection(state.floors3d, newPts, 0);
       state.gardens.push({ id: state.nextId++, rings: [newPts] });
       state.gardens = tryMergeCollection(state.gardens, () => true);
     });
