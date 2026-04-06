@@ -336,8 +336,20 @@ function subtractPolyFromCollection(items, clipPts, floorLevel) {
       out.push(item); continue;
     }
     const outer = item.rings[0];
+    const edgesIntersect = () => {
+      const n1 = clipPts.length, n2 = outer.length;
+      for (let a = 0; a < n1; a++) {
+        const p1 = clipPts[a], p2 = clipPts[(a+1)%n1];
+        for (let b = 0; b < n2; b++) {
+          const p3 = outer[b], p4 = outer[(b+1)%n2];
+          if (segsIntersect(p1.x,p1.y,p2.x,p2.y,p3.x,p3.y,p4.x,p4.y)) return true;
+        }
+      }
+      return false;
+    };
     const overlaps = clipPts.some(p => pointInPoly(p.x, p.y, outer)) ||
-                     outer.some(p => pointInPoly(p.x, p.y, clipPts));
+                     outer.some(p => pointInPoly(p.x, p.y, clipPts)) ||
+                     edgesIntersect();
     if (!overlaps) { out.push(item); continue; }
     const result = polygonClipping.difference(toClipPoly(item.rings), clip);
     let first = true;
