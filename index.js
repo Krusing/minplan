@@ -694,6 +694,16 @@ function setup3DControls() {
   });
   el.addEventListener('contextmenu', (e) => e.preventDefault());
 
+  el.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const speed = 0.01;
+    const fwd   = new THREE.Vector3(-Math.sin(cam.yaw) * Math.cos(cam.pitch), Math.sin(cam.pitch), -Math.cos(cam.yaw) * Math.cos(cam.pitch));
+    cam.pos.addScaledVector(fwd, -e.deltaY * speed);
+    if (!fpsMode) cam.pos.y = Math.max(0.5, cam.pos.y);
+    updateCamera();
+    saveSession();
+  }, { passive: false });
+
   el.addEventListener('click', (e) => {
     if (state.tool !== 'wall') return;
     const gpt = raycastGroundGrid(e.clientX, e.clientY);
