@@ -401,13 +401,16 @@ function polyAddPoint(gpt, onClose) {
     return;
   }
   const last = state.polyPts[state.polyPts.length - 1];
-  const end  = wallEnd(last, gpt);
-  if (state.polyPts.length >= 3 && Math.hypot(end.x - state.polyPts[0].x, end.y - state.polyPts[0].y) < POLY_SNAP) {
+  // Close check uses raw gpt (not ortho-snapped) so Shift doesn't prevent closing
+  if (state.polyPts.length >= 3 && Math.hypot(gpt.x - state.polyPts[0].x, gpt.y - state.polyPts[0].y) < POLY_SNAP) {
     onClose();
     state.polyPts = [];
     state.dirty3d = true;
-  } else if (end.x !== last.x || end.y !== last.y) {
-    state.polyPts.push({ ...end });
+  } else {
+    const end = wallEnd(last, gpt);
+    if (end.x !== last.x || end.y !== last.y) {
+      state.polyPts.push({ ...end });
+    }
   }
 }
 
@@ -669,7 +672,7 @@ function draw2D() {
     const pts = state.polyPts;
     const last = pts[pts.length - 1];
     const end  = wallEnd(last, state.hoverPt);
-    const snapClose = pts.length >= 3 && Math.hypot(end.x - pts[0].x, end.y - pts[0].y) < POLY_SNAP;
+    const snapClose = pts.length >= 3 && Math.hypot(state.hoverPt.x - pts[0].x, state.hoverPt.y - pts[0].y) < POLY_SNAP;
     const drawEnd   = snapClose ? pts[0] : end;
     ctx.strokeStyle = 'rgba(110,90,60,0.7)'; ctx.lineWidth = 1.5; ctx.setLineDash([5, 3]);
     ctx.beginPath();
@@ -733,7 +736,7 @@ function draw2D() {
     const pts = state.polyPts;
     const last = pts[pts.length - 1];
     const end  = wallEnd(last, state.hoverPt);
-    const snapClose = pts.length >= 3 && Math.hypot(end.x - pts[0].x, end.y - pts[0].y) < 1.5;
+    const snapClose = pts.length >= 3 && Math.hypot(state.hoverPt.x - pts[0].x, state.hoverPt.y - pts[0].y) < POLY_SNAP;
     const drawEnd   = snapClose ? pts[0] : end;
 
     ctx.strokeStyle = 'rgba(130,100,70,0.7)';
@@ -785,7 +788,7 @@ function draw2D() {
     const pts = state.polyPts;
     const last = pts[pts.length - 1];
     const end  = wallEnd(last, state.hoverPt);
-    const snapClose = pts.length >= 3 && Math.hypot(end.x - pts[0].x, end.y - pts[0].y) < 1.5;
+    const snapClose = pts.length >= 3 && Math.hypot(state.hoverPt.x - pts[0].x, state.hoverPt.y - pts[0].y) < POLY_SNAP;
     const drawEnd   = snapClose ? pts[0] : end;
 
     ctx.strokeStyle = 'rgba(80,140,60,0.7)';
@@ -946,7 +949,7 @@ function draw2D() {
   if (state.tool === 'erase-area' && state.polyPts.length > 0 && state.hoverPt) {
     const pts = state.polyPts;
     const end  = wallEnd(pts[pts.length - 1], state.hoverPt);
-    const snapClose = pts.length >= 3 && Math.hypot(end.x - pts[0].x, end.y - pts[0].y) < POLY_SNAP;
+    const snapClose = pts.length >= 3 && Math.hypot(state.hoverPt.x - pts[0].x, state.hoverPt.y - pts[0].y) < POLY_SNAP;
     const drawEnd   = snapClose ? pts[0] : end;
     ctx.strokeStyle = 'rgba(192,64,64,0.7)'; ctx.lineWidth = 1.5; ctx.setLineDash([5, 3]);
     ctx.beginPath();
