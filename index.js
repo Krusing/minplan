@@ -1469,24 +1469,24 @@ function buildWallMeshes(w, wallMat, yOff, wallH) {
     .filter(op => op.wallId === w.id)
     .sort((a, b) => a.left - b.left);
 
-  // Miter: check if a perpendicular wall meets at each endpoint.
-  // If so, the current wall yields WALL_T/2 at that end (the other wall covers the corner).
+  // At each endpoint: add WALL_T/2 cap only if no perpendicular wall connects there.
+  // A perpendicular wall at the endpoint covers the corner, so no cap needed.
   function hasPerpAt(px, py) {
     return state.walls.some(o => {
       if (o.id === w.id || (o.floor ?? 0) !== (w.floor ?? 0)) return false;
       const oIsH = Math.abs(o.y2 - o.y1) < 0.001;
-      if (oIsH === isH) return false; // same direction → not perpendicular
+      if (oIsH === isH) return false; // same direction — not perpendicular
       return (o.x1 === px && o.y1 === py) || (o.x2 === px && o.y2 === py);
     });
   }
-  const miterStart = hasPerpAt(w.x1, w.y1) ? WALL_T / 2 : 0;
-  const miterEnd   = hasPerpAt(w.x2, w.y2) ? WALL_T / 2 : 0;
-  const adjLen     = len - miterStart - miterEnd;
-  if (adjLen < 0.001) return;
+  const padStart = hasPerpAt(w.x1, w.y1) ? 0 : WALL_T / 2;
+  const padEnd   = hasPerpAt(w.x2, w.y2) ? 0 : WALL_T / 2;
+  const adjLen   = len + padStart + padEnd;
+  const shift    = (padEnd - padStart) / 2; // offset centre if pads differ
 
   if (wallOpenings.length === 0) {
-    const cx = (w.x1 + w.x2) / 2 * UNIT + (miterStart - miterEnd) / 2 * (isH ? signX : 0);
-    const cz = (w.y1 + w.y2) / 2 * UNIT + (miterStart - miterEnd) / 2 * (isH ? 0 : signZ);
+    const cx = (w.x1 + w.x2) / 2 * UNIT + shift * (isH ? signX : 0);
+    const cz = (w.y1 + w.y2) / 2 * UNIT + shift * (isH ? 0 : signZ);
     addWallBox(cx, yOff + wallH / 2, cz, isH ? adjLen : WALL_T, wallH, isH ? WALL_T : adjLen, wallMat, w.id);
     return;
   }
