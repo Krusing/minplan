@@ -1469,20 +1469,25 @@ function buildWallMeshes(w, wallMat, yOff, wallH) {
     .filter(op => op.wallId === w.id)
     .sort((a, b) => a.left - b.left);
 
-  // At each endpoint: add WALL_T/2 cap only if no perpendicular wall connects there.
-  // A perpendicular wall at the endpoint covers the corner, so no cap needed.
-  function hasPerpAt(px, py) {
-    return state.walls.some(o => {
+  // Corner joint rule: V-wall (isH=false) dominates, H-wall (isH=true) yields.
+  // - Free end             → +WALL_T/2  (cap to fill the end)
+  // - Joint, dominant (V)  → +WALL_T/2  (extends into corner, covers it)
+  // - Joint, yielding  (H) → -WALL_T/2  (stops at V-wall's outer face, no overlap)
+  function cornerPad(px, py) {
+    const hasPerp = state.walls.some(o => {
       if (o.id === w.id || (o.floor ?? 0) !== (w.floor ?? 0)) return false;
       const oIsH = Math.abs(o.y2 - o.y1) < 0.001;
-      if (oIsH === isH) return false; // same direction — not perpendicular
+      if (oIsH === isH) return false;
       return (o.x1 === px && o.y1 === py) || (o.x2 === px && o.y2 === py);
     });
+    if (!hasPerp) return WALL_T / 2;          // free end
+    return isH ? -WALL_T / 2 : WALL_T / 2;   // H yields, V dominates
   }
-  const padStart = hasPerpAt(w.x1, w.y1) ? 0 : WALL_T / 2;
-  const padEnd   = hasPerpAt(w.x2, w.y2) ? 0 : WALL_T / 2;
+  const padStart = cornerPad(w.x1, w.y1);
+  const padEnd   = cornerPad(w.x2, w.y2);
   const adjLen   = len + padStart + padEnd;
-  const shift    = (padEnd - padStart) / 2; // offset centre if pads differ
+  if (adjLen < 0.001) return;
+  const shift    = (padEnd - padStart) / 2;
 
   if (wallOpenings.length === 0) {
     const cx = (w.x1 + w.x2) / 2 * UNIT + shift * (isH ? signX : 0);
