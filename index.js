@@ -55,7 +55,7 @@ const state = {
 };
 
 // ── COLOR PALETTE ─────────────────────────────────────────
-const DEFAULT_WALL_PALETTE  = ['#f5f0e8','#ede0cc','#d4c4b0','#c8b090','#a89070','#e8e4dc','#d0cbc2','#b8b2aa','#a09890','#908880','#7a7068','#605850'];
+const DEFAULT_WALL_PALETTE  = ['#ffffff','#f0ece5','#e0d8cc','#d4c4b0','#c8b090','#b8c4c8','#8ca0a8','#c4c8b8','#a8b09c','#c0a8a8','#7a7068','#605850'];
 const DEFAULT_FLOOR_PALETTE = ['#c8a46e','#b8945e','#a8844e','#d4b47a','#e0c890','#8b6840','#7a5830','#6a4820','#dfc08a','#c4a060','#a88040','#906030'];
 
 let wallPalette   = [...DEFAULT_WALL_PALETTE];
@@ -1367,7 +1367,6 @@ function setup3DControls() {
     if (state.tool === 'paint') {
       const hit = raycastWall(e.clientX, e.clientY);
       const color = document.getElementById('wall-color').value;
-      console.log('[paint click] hit=', hit ? `wallId=${hit.wallId} side=${hit.side}` : null, 'color=', color);
       if (!hit) return;
       const w = hit.w;
       if (wallRemoveMode) {
