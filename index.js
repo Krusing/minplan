@@ -1366,8 +1366,9 @@ function setup3DControls() {
   el.addEventListener('click', (e) => {
     if (state.tool === 'paint') {
       const hit = raycastWall(e.clientX, e.clientY);
-      if (!hit) return;
       const color = document.getElementById('wall-color').value;
+      console.log('[paint click] hit=', hit ? `wallId=${hit.wallId} side=${hit.side}` : null, 'color=', color);
+      if (!hit) return;
       const w = hit.w;
       if (wallRemoveMode) {
         if (hit.side === 'front') w.colorFront = null;
