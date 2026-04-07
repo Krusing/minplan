@@ -1465,6 +1465,20 @@ function buildWallMeshes(w, wallMat, yOff, wallH) {
   const signZ   = isH ? 0 : (w.y2 >= w.y1 ? 1 : -1);
   const wallLen = len / UNIT;  // grid units
 
+  // BoxGeometry face group order: +X=0, -X=1, +Y=2, -Y=3, +Z=4, -Z=5
+  // Front normal: (-signZ, 0, signX)
+  // isH wall (along X): front = +Z if signX>0 (idx 4), -Z if signX<0 (idx 5)
+  // !isH wall (along Z): front = -X if signZ>0 (idx 1), +X if signZ<0 (idx 0)
+  const frontFaceIdx = isH ? (signX > 0 ? 4 : 5) : (signZ > 0 ? 1 : 0);
+  const backFaceIdx  = isH ? (signX > 0 ? 5 : 4) : (signZ > 0 ? 0 : 1);
+  function faceMat() {
+    if (!w.colorFront && !w.colorBack) return wallMat;
+    const mats = new Array(6).fill(wallMat);
+    if (w.colorFront) mats[frontFaceIdx] = new THREE.MeshLambertMaterial({ color: w.colorFront });
+    if (w.colorBack)  mats[backFaceIdx]  = new THREE.MeshLambertMaterial({ color: w.colorBack });
+    return mats;
+  }
+
   const wallOpenings = state.openings
     .filter(op => op.wallId === w.id)
     .sort((a, b) => a.left - b.left);
@@ -1492,9 +1506,8 @@ function buildWallMeshes(w, wallMat, yOff, wallH) {
   if (wallOpenings.length === 0) {
     const cx = (w.x1 + w.x2) / 2 * UNIT + shift * (isH ? signX : 0);
     const cz = (w.y1 + w.y2) / 2 * UNIT + shift * (isH ? 0 : signZ);
-    addWallBox(cx, yOff + wallH / 2, cz, isH ? adjLen : WALL_T, wallH, isH ? WALL_T : adjLen, wallMat, w.id);
-    return;
-  }
+    addWallBox(cx, yOff + wallH / 2, cz, isH ? adjLen : WALL_T, wallH, isH ? WALL_T : adjLen, faceMat(), w.id);
+  } else {
 
   const pieces = [];
   let cursor = 0;
@@ -1529,8 +1542,9 @@ function buildWallMeshes(w, wallMat, yOff, wallH) {
     const cz = w.y1 * UNIT + signZ * midG * UNIT;
     const cy = yOff + piece.yFrom + pieceH / 2;
 
-    addWallBox(cx, cy, cz, isH ? adjLen : WALL_T, pieceH, isH ? WALL_T : adjLen, wallMat, w.id);
+    addWallBox(cx, cy, cz, isH ? adjLen : WALL_T, pieceH, isH ? WALL_T : adjLen, faceMat(), w.id);
   }
+  } // end else (wallOpenings)
 
   const glassMat = new THREE.MeshLambertMaterial({ color: 0xadd8e6, transparent: true, opacity: 0.28 });
   for (const op of wallOpenings) {
@@ -1544,28 +1558,6 @@ function buildWallMeshes(w, wallMat, yOff, wallH) {
     addBox(cx, cy, cz, isH ? opW : 0.02, opH, isH ? 0.02 : opW, glassMat);
   }
 
-  // Color planes — one per painted side, offset slightly from wall face
-  // Wall runs along X (isH) or Z (!isH).
-  // "front" = left of travel direction = negative Z (isH) or positive X (!isH)
-  const wallLen3 = len;
-  const wCx = (w.x1 + w.x2) / 2 * UNIT;
-  const wCz = (w.y1 + w.y2) / 2 * UNIT;
-  const PAINT_OFF = WALL_T / 2 + 0.005;
-  // front normal: perpendicular left of wall direction
-  // wall dir: (signX, 0, signZ) → left normal: (-signZ, 0, signX)
-  const fnx = -signZ, fnz = signX; // front normal in XZ
-  for (const [color, side] of [[w.colorFront, 'front'], [w.colorBack, 'back']]) {
-    if (!color) continue;
-    const s   = side === 'front' ? 1 : -1;
-    const nx  = fnx * s, nz = fnz * s;
-    const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(color), side: THREE.FrontSide });
-    const plane = new THREE.Mesh(new THREE.PlaneGeometry(wallLen3, wallH), mat);
-    plane.position.set(wCx + nx * PAINT_OFF, yOff + wallH / 2, wCz + nz * PAINT_OFF);
-    // Face the plane outward: rotation around Y
-    plane.rotation.y = Math.atan2(nx, nz) + (side === 'back' ? Math.PI : 0);
-    plane.userData.dynamic = true;
-    scene.add(plane);
-  }
 }
 
 function init3D() {
@@ -2552,9 +2544,8 @@ function loop(now) {
       if (!o.userData.wallId) return;
       const h = state.hoverWall3d;
       const isHov = h && o.userData.wallId === h.wallId;
-      if (o.material?.emissive) {
-        o.material.emissive.set(isHov ? 0x332200 : 0x000000);
-      }
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      mats.forEach(m => { if (m?.emissive) m.emissive.set(isHov ? 0x332200 : 0x000000); });
     });
     renderer.render(scene, camera);
   }
