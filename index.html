@@ -8,9 +8,8 @@
   <script type="importmap">
     {
       "imports": {
-        "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
-        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/",
-        "polygon-clipping": "https://esm.sh/polygon-clipping@0.15.7"
+        "polygon-clipping": "https://esm.sh/polygon-clipping@0.15.7",
+        "earcut": "https://esm.sh/earcut@2.2.4"
       }
     }
   </script>
@@ -46,6 +45,13 @@
             <path d="M6 7 L6 13 Q6 17 10 17 Q14 17 14 13 L14 7 Q14 5.5 13 5.5 Q12 5.5 12 7 L12 6 Q12 4.5 11 4.5 Q10 4.5 10 6 L10 5 Q10 3.5 9 3.5 Q8 3.5 8 5 L8 7 Q8 5.5 7 5.5 Q6 5.5 6 7Z" fill="rgba(139,115,85,0.15)"/>
           </svg>
           Panorera
+        </button>
+
+        <button class="tool-btn" data-tool="select">
+          <svg class="tool-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 3 L4 15 L7.5 11.5 L10 17 L12 16 L9.5 10.5 L14 10.5 Z" fill="rgba(139,115,85,0.15)" stroke="currentColor"/>
+          </svg>
+          Välj
         </button>
 
         <button class="tool-btn" data-tool="wall">
@@ -280,6 +286,14 @@
       </div>
 
     </div>
+  </div>
+
+  <div id="inspector" class="inspector hidden">
+    <div class="inspector-header">
+      <span id="inspector-title">Objekt</span>
+      <button class="inspector-close" id="inspector-close" title="Stäng">✕</button>
+    </div>
+    <div id="inspector-body"></div>
   </div>
 
   <script type="module" src="index.js"></script>
