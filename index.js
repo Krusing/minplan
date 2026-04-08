@@ -2429,6 +2429,9 @@ function buildWallMeshes(w, wallColor, yOff, wallH) {
     ((o.x1 === px && o.y1 === pz) || (o.x2 === px && o.y2 === pz))).length;
   const skipStartCap = countNeighbors(w.x1, w.y1) >= 1;
   const skipEndCap   = countNeighbors(w.x2, w.y2) >= 1;
+  // Entering wall at T-junction: miterShift===null (no collinear neighbor) but 2+ neighbors
+  // The end case reuses the existing free-end formula which already gives the far-side result
+  const startIsT = miterStart === null && countNeighbors(w.x1, w.y1) >= 2;
 
   // Face colors for paint
   const frontCol = w.colorFront ? hexToRGB(w.colorFront) : wallColor;
@@ -2450,6 +2453,11 @@ function buildWallMeshes(w, wallColor, yOff, wallH) {
       slz = sz + pnz*t + wdz*miterStart;
       srx = sx - pnx*t - wdx*miterStart;
       srz = sz - pnz*t - wdz*miterStart;
+    } else if (isWallStart && startIsT) {
+      // T-junction entering wall: start at FAR side of crossing wall (+wallDir by t)
+      // so the wall body begins just outside the crossing wall with no overlap
+      slx = sx + pnx*t + wdx*t; slz = sz + pnz*t + wdz*t;
+      srx = sx - pnx*t + wdx*t; srz = sz - pnz*t + wdz*t;
     } else if (isWallStart) {
       // Free end: extend both sides by t past the grid point (in -wallDir)
       slx = sx + pnx*t - wdx*t; slz = sz + pnz*t - wdz*t;
