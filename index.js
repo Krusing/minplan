@@ -2356,8 +2356,20 @@ function getMiterShift(px, pz, outDirX, outDirZ, wallId, floor) {
     if (o.id === wallId || (o.floor ?? 0) !== floor) return false;
     return (o.x1 === px && o.y1 === pz) || (o.x2 === px && o.y2 === pz);
   });
-  if (neighbors.length === 0) return null; // free end
-  if (neighbors.length >= 2) return 0;    // T/X-junction: flat perpendicular cut
+  if (neighbors.length === 0) return null; // free end — use push-back formula
+  if (neighbors.length >= 2) {
+    // T/X-junction: check if this wall is collinear with any neighbor
+    // (i.e. the neighbor goes the opposite direction — it's the "crossing" wall pair)
+    for (const o of neighbors) {
+      let dOx, dOz;
+      if (o.x1 === px && o.y1 === pz) { dOx = o.x2 - o.x1; dOz = o.y2 - o.y1; }
+      else { dOx = o.x1 - o.x2; dOz = o.y1 - o.y2; }
+      const oLen = Math.hypot(dOx, dOz); if (oLen < 0.001) continue;
+      dOx /= oLen; dOz /= oLen;
+      if (outDirX * dOx + outDirZ * dOz < -0.99) return 0; // collinear pair → flat end
+    }
+    return null; // entering wall → use push-back formula (embeds into crossing wall)
+  }
   const o = neighbors[0];
   // Neighbor's direction going OUT from P
   let dOx, dOz;
@@ -2410,10 +2422,13 @@ function buildWallMeshes(w, wallColor, yOff, wallH) {
   const miterStart = getMiterShift(w.x1, w.y1, wdx, wdz, w.id, floor);
   const miterEnd   = getMiterShift(w.x2, w.y2, -wdx, -wdz, w.id, floor);
 
-  // Skip end caps wherever a miter is applied — the miter closes the joint,
-  // the cap face is only needed at free ends (miter === null)
-  const skipStartCap = miterStart !== null;
-  const skipEndCap   = miterEnd !== null;
+  // Skip end caps at any joined endpoint — cap faces are buried inside other walls.
+  // For T-junction entering walls miterStart===null but cap still must be skipped.
+  const countNeighbors = (px, pz) => state.walls.filter(o =>
+    o.id !== w.id && (o.floor ?? 0) === floor &&
+    ((o.x1 === px && o.y1 === pz) || (o.x2 === px && o.y2 === pz))).length;
+  const skipStartCap = countNeighbors(w.x1, w.y1) >= 1;
+  const skipEndCap   = countNeighbors(w.x2, w.y2) >= 1;
 
   // Face colors for paint
   const frontCol = w.colorFront ? hexToRGB(w.colorFront) : wallColor;
