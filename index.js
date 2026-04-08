@@ -2410,12 +2410,10 @@ function buildWallMeshes(w, wallColor, yOff, wallH) {
   const miterStart = getMiterShift(w.x1, w.y1, wdx, wdz, w.id, floor);
   const miterEnd   = getMiterShift(w.x2, w.y2, -wdx, -wdz, w.id, floor);
 
-  // T-junction detection: skip end caps that are buried inside other walls
-  const countNeighbors = (px, pz) => state.walls.filter(o =>
-    o.id !== w.id && (o.floor ?? 0) === floor &&
-    ((o.x1 === px && o.y1 === pz) || (o.x2 === px && o.y2 === pz))).length;
-  const skipStartCap = countNeighbors(w.x1, w.y1) >= 2;
-  const skipEndCap   = countNeighbors(w.x2, w.y2) >= 2;
+  // Skip end caps wherever a miter is applied — the miter closes the joint,
+  // the cap face is only needed at free ends (miter === null)
+  const skipStartCap = miterStart !== null;
+  const skipEndCap   = miterEnd !== null;
 
   // Face colors for paint
   const frontCol = w.colorFront ? hexToRGB(w.colorFront) : wallColor;
